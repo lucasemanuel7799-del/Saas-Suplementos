@@ -1,13 +1,49 @@
 "use client";
 
-import { Check, Zap } from "lucide-react";
+import { Check, Zap, Loader2 } from "lucide-react";
+import { useState } from "react";
+import { toast } from "sonner";
 
 export function PricingSection() {
-  
-  // Função Placeholder para o Stripe (Vamos configurar no próximo passo)
-  const handleSubscribe = () => {
-    alert("Aqui redirecionaremos para o Checkout do Stripe!");
-    // window.location.href = '/api/stripe/checkout';
+  const [isProcessing, setIsProcessing] = useState(false);
+
+  // Função Atualizada para o Stripe
+  const handleSubscribe = async () => {
+    setIsProcessing(true);
+    
+    try {
+      const response = await fetch("/api/checkout", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          plan: "premium",
+          cycle: "monthly", // Plano padrão da landing page
+        }),
+        // ESSENCIAL: Envia os cookies para o servidor identificar o usuário logado
+        credentials: "include",
+      });
+
+      const data = await response.json();
+
+      if (data.url) {
+        window.location.href = data.url;
+      } else {
+        // Se o erro for 401 (não logado), redireciona para login
+        if (response.status === 401) {
+          toast.error("Você precisa estar logado para assinar.");
+          window.location.href = "/admin/login";
+          return;
+        }
+        throw new Error(data.error || "Erro ao iniciar checkout");
+      }
+    } catch (error: any) {
+      console.error("Erro no checkout:", error);
+      toast.error(error.message || "Erro ao conectar com o servidor.");
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -43,13 +79,18 @@ export function PricingSection() {
             </div>
           </div>
 
-          {/* Botão de Assinatura */}
+          {/* Botão de Assinatura Atualizado */}
           <button
             onClick={handleSubscribe}
-            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl text-lg transition-all active:scale-[0.98] shadow-lg shadow-blue-900/20 mb-8 group"
+            disabled={isProcessing}
+            className="w-full flex items-center justify-center gap-2 bg-blue-600 hover:bg-blue-500 text-white font-bold py-4 rounded-xl text-lg transition-all active:scale-[0.98] shadow-lg shadow-blue-900/20 mb-8 group disabled:opacity-50"
           >
-            <Zap size={20} className="fill-white" />
-            Assinar Agora
+            {isProcessing ? (
+              <Loader2 className="animate-spin" size={20} />
+            ) : (
+              <Zap size={20} className="fill-white" />
+            )}
+            {isProcessing ? "Processando..." : "Assinar Agora"}
           </button>
 
           {/* Lista de Features */}

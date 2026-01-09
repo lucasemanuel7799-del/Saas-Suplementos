@@ -37,19 +37,15 @@ export default function SubscriptionBlocker() {
     const subEnd = store.subscription_ends_at ? new Date(store.subscription_ends_at) : null;
 
     // Lógica de Status
-    // 1. Assinatura Ativa
     if (store.subscription_status === 'active' && subEnd && subEnd > now) {
         setStatus('active');
     } 
-    // 2. Trial Ativo
     else if (store.subscription_status === 'trial' && trialEnd && trialEnd > now) {
         setStatus('trial_active');
     }
-    // 3. Trial Expirado (Nunca pagou)
     else if (store.subscription_status === 'trial') {
         setStatus('expired_trial');
     }
-    // 4. Assinatura Expirada/Cancelada (Já pagou antes)
     else {
         setStatus('expired_sub');
     }
@@ -57,21 +53,22 @@ export default function SubscriptionBlocker() {
     setLoading(false);
   }
 
-  // Integração Real com o Stripe via sua rota /api/checkout
   const handleCheckout = async () => {
     setProcessing(true);
     
     try {
-      // Mapeia 'annual' para 'yearly' para bater com o seu PRICE_IDS do route.ts
+      // Sincroniza os nomes dos ciclos com o que o route.ts espera
       const cycle = selectedPlan === 'annual' ? 'yearly' : selectedPlan;
 
       const response = await fetch("/api/checkout", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ 
-          plan: "premium", // Seu PRICE_IDS espera o grupo 'premium'
+          plan: "premium", 
           cycle: cycle 
         }),
+        // CORREÇÃO ESSENCIAL: Envia os cookies de sessão para o servidor
+        credentials: "include", 
       });
 
       const data = await response.json();
@@ -89,7 +86,6 @@ export default function SubscriptionBlocker() {
     }
   };
 
-  // Se estiver tudo ok ou carregando, não mostra nada
   if (loading || status === 'active' || status === 'trial_active') {
     return null; 
   }
@@ -98,10 +94,9 @@ export default function SubscriptionBlocker() {
 
   return (
     <div className="fixed inset-0 z-[100] bg-zinc-950/90 backdrop-blur-md flex items-center justify-center p-4 overflow-y-auto">
-      
       <div className="w-full max-w-5xl grid grid-cols-1 lg:grid-cols-2 bg-zinc-900 border border-zinc-800 rounded-3xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-300">
         
-        {/* Lado Esquerdo: A Mensagem */}
+        {/* Lado Esquerdo: Mensagem */}
         <div className="p-8 lg:p-12 flex flex-col justify-center relative overflow-hidden">
             <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-orange-500 to-purple-600" />
             
@@ -136,9 +131,8 @@ export default function SubscriptionBlocker() {
             </div>
         </div>
 
-        {/* Lado Direito: Os Planos */}
+        {/* Lado Direito: Planos */}
         <div className="bg-zinc-950 p-8 lg:p-12 border-l border-zinc-800 flex flex-col justify-center">
-            
             <h2 className="text-white font-bold text-xl mb-6 flex items-center gap-2">
                 <Crown size={20} className="text-orange-500" /> Escolha o melhor plano
             </h2>
@@ -163,11 +157,10 @@ export default function SubscriptionBlocker() {
                     <div className="flex justify-between items-center">
                         <div>
                             <p className="font-bold text-white">Semestral</p>
-                            <p className="text-xs text-zinc-500">Cobrado a cada 6 meses</p>
+                            <p className="text-xs text-zinc-500">A cada 6 meses</p>
                         </div>
                         <div className="text-right">
                             <p className="font-bold text-xl text-white">R$ 208<span className="text-sm text-zinc-500">/mês</span></p>
-                            <p className="text-[10px] text-zinc-500 line-through">Total R$ 1.250</p>
                         </div>
                     </div>
                 </label>
@@ -181,11 +174,10 @@ export default function SubscriptionBlocker() {
                     <div className="flex justify-between items-center">
                         <div>
                             <p className="font-bold text-white">Anual</p>
-                            <p className="text-xs text-zinc-500">Cobrado uma vez ao ano</p>
+                            <p className="text-xs text-zinc-500">Uma vez ao ano</p>
                         </div>
                         <div className="text-right">
                             <p className="font-bold text-xl text-white">R$ 208<span className="text-sm text-zinc-500">/mês</span></p>
-                            <p className="text-[10px] text-zinc-500 line-through">Total R$ 2.500</p>
                         </div>
                     </div>
                 </label>
@@ -194,7 +186,7 @@ export default function SubscriptionBlocker() {
             <button 
                 onClick={handleCheckout}
                 disabled={processing}
-                className="w-full py-4 bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-500 hover:to-orange-400 text-white font-bold rounded-xl text-lg shadow-lg shadow-orange-900/20 transition-all active:scale-95 flex items-center justify-center gap-2"
+                className="w-full py-4 bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-500 hover:to-orange-400 text-white font-bold rounded-xl text-lg shadow-lg shadow-orange-900/20 transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
             >
                 {processing ? <Loader2 className="animate-spin" /> : (isRenovation ? <CheckCircle2 /> : <CreditCard />)}
                 {processing ? "Iniciando..." : (isRenovation ? "RENOVAR ASSINATURA" : "ASSINAR AGORA")}

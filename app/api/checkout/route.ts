@@ -2,8 +2,10 @@ import { NextResponse } from "next/server";
 import Stripe from "stripe";
 import { createClient } from "@/lib/supabase-server";
 
+// Inicializa o Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
 
+// Mapeamento de IDs de Preço do seu Stripe
 const PRICE_IDS = {
   premium: {
     monthly: "price_1SmqQeRwULq0EosYdcU1SiRA",
@@ -17,13 +19,13 @@ export async function POST(req: Request) {
     const body = await req.json();
     const { plan, cycle } = body;
 
-    // 1. Instanciar o Supabase com suporte a cookies
+    // 1. Inicializa o cliente do Supabase para Server-Side
     const supabase = await createClient();
-
-    // 2. Tentar obter o usuário de duas formas para garantir a captura
+    
+    // 2. Tenta obter o usuário logado de forma segura
     const { data: { user } } = await supabase.auth.getUser();
     
-    // Se o getUser falhar, tentamos pegar da sessão ativa
+    // Fallback: Se getUser falhar por latência, tenta recuperar via sessão
     let finalUserId = user?.id;
     let finalUserEmail = user?.email;
 
@@ -33,41 +35,44 @@ export async function POST(req: Request) {
       finalUserEmail = session?.user?.email;
     }
 
-    // LOG DE DEBUG PARA O TERMINAL
-    console.log("🔍 Tentativa de identificação do usuário:");
-    console.log("- User ID capturado:", finalUserId);
+    // LOG DE DEBUG: Verifique isso no terminal do seu VS Code
+    console.log("🔍 Tentativa de Checkout:");
+    console.log("- Usuário ID:", finalUserId || "NÃO IDENTIFICADO (Undefined)");
+    console.log("- Plano:", plan, "Ciclo:", cycle);
 
-    // 3. Se ainda assim for undefined, bloqueamos o checkout
+    // Se mesmo assim não houver usuário, bloqueia a criação do checkout
     if (!finalUserId) {
-      console.error("❌ ERRO: Sessão de usuário não encontrada no servidor.");
       return NextResponse.json(
-        { error: "Você precisa estar logado para assinar." }, 
+        { error: "Sessão expirada. Por favor, saia e entre novamente no sistema." }, 
         { status: 401 }
       );
     }
 
-    if (!plan || !cycle) {
-      return NextResponse.json({ error: "Dados incompletos." }, { status: 400 });
-    }
-
+    // 3. Validação do Preço selecionado
     // @ts-ignore
-    const priceId = PRICE_IDS[plan]?.[cycle === 'annual' ? 'yearly' : cycle];
+    const priceId = PRICE_IDS[plan]?.[cycle];
 
     if (!priceId) {
-      return NextResponse.json({ error: "Preço não encontrado." }, { status: 400 });
+      return NextResponse.json({ error: "Configuração de plano inválida." }, { status: 400 });
     }
 
     const baseUrl = process.env.NEXT_PUBLIC_URL || "http://localhost:3000";
 
-    // 4. Criar a sessão no Stripe com os Metadados validados
+    // 4. Cria a sessão de checkout no Stripe
     const session = await stripe.checkout.sessions.create({
       payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
+      line_items: [
+        {
+          price: priceId,
+          quantity: 1,
+        },
+      ],
       mode: "subscription",
       allow_promotion_codes: true,
       
+      // METADADOS: Isso é o que o seu Webhook usará para atualizar a tabela 'stores'
       metadata: {
-        storeId: finalUserId, // Aqui garantimos que não irá 'undefined'
+        storeId: finalUserId, 
       },
       
       customer_email: finalUserEmail || undefined,
@@ -75,12 +80,13 @@ export async function POST(req: Request) {
       cancel_url: `${baseUrl}/admin`,
     });
 
-    console.log("✅ Sessão de Checkout criada com sucesso para:", finalUserId);
-
     return NextResponse.json({ url: session.url });
 
   } catch (error: any) {
-    console.error("❌ Erro crítico no checkout:", error.message);
-    return NextResponse.json({ error: "Erro interno no servidor." }, { status: 500 });
+    console.error("❌ Erro no servidor (Checkout):", error.message);
+    return NextResponse.json(
+      { error: "Erro interno ao processar o checkout." }, 
+      { status: 500 }
+    );
   }
 }

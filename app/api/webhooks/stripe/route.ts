@@ -1,62 +1,70 @@
 import { NextResponse } from "next/server";
+import { headers } from "next/headers";
 import Stripe from "stripe";
-import { createClient } from "@/lib/supabase-server"; // Verifique se este caminho está correto
+import { createClient } from "@/lib/supabase-server";
 
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY as string);
+const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET as string;
 
 export async function POST(req: Request) {
+  const body = await req.text();
+  const sig = (await headers()).get("stripe-signature") as string;
+
+  let event: Stripe.Event;
+
   try {
-    const body = await req.json();
-    const { plan, cycle } = body;
-
-    // 1. Pegar a sessão do usuário no servidor
-    const supabase = await createClient();
-    const { data: { user }, error: authError } = await supabase.auth.getUser();
-
-    // LOG DE DEBUG - Veja isso no terminal do VS Code
-    console.log("USUÁRIO IDENTIFICADO NO CHECKOUT:", user?.id);
-
-    if (authError || !user) {
-      console.error("ERRO DE AUTENTICAÇÃO:", authError);
-      return NextResponse.json({ error: "Usuário não autenticado." }, { status: 401 });
-    }
-
-    // 2. Definir o Price ID (Use os seus IDs reais do Stripe aqui)
-    const PRICE_IDS: any = {
-      premium: {
-        monthly: "price_1SmqQeRwULq0EosYdcU1SiRA",
-        yearly: "price_1SmqQeRwULq0EosYHgJprEPH",
-      },
-    };
-
-    const priceId = PRICE_IDS[plan]?.[cycle === 'annual' ? 'yearly' : cycle];
-
-    if (!priceId) {
-      return NextResponse.json({ error: "Plano não encontrado." }, { status: 400 });
-    }
-
-    const baseUrl = process.env.NEXT_PUBLIC_URL || "http://localhost:3000";
-
-    // 3. Criar a sessão com METADADOS GARANTIDOS
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ["card"],
-      line_items: [{ price: priceId, quantity: 1 }],
-      mode: "subscription",
-      
-      // ESTA PARTE É A QUE ESTAVA FALTANDO NO SEU PAINEL DO STRIPE
-      metadata: {
-        storeId: user.id, // ID do Supabase
-      },
-      
-      customer_email: user.email,
-      success_url: `${baseUrl}/admin?success=true`,
-      cancel_url: `${baseUrl}/admin`,
-    });
-
-    return NextResponse.json({ url: session.url });
-
-  } catch (error: any) {
-    console.error("ERRO CRÍTICO NO CHECKOUT:", error.message);
-    return NextResponse.json({ error: error.message }, { status: 500 });
+    event = stripe.webhooks.constructEvent(body, sig, endpointSecret);
+  } catch (err: any) {
+    console.error(`❌ Erro na assinatura do Webhook: ${err.message}`);
+    return NextResponse.json({ error: "Webhook signature failed" }, { status: 400 });
   }
+
+  const supabase = await createClient();
+
+  // EVENTO: Assinatura Criada ou Atualizada com Sucesso
+  if (event.type === "checkout.session.completed" || event.type === "customer.subscription.updated") {
+    const session = event.data.object as Stripe.Checkout.Session;
+    
+    // Recupera o ID do usuário que guardamos nos metadados lá no Checkout
+    const userId = session.metadata?.storeId;
+
+    if (!userId) {
+      console.error("❌ Erro: userId não encontrado nos metadados da sessão.");
+      return NextResponse.json({ error: "No userId in metadata" }, { status: 400 });
+    }
+
+    console.log(`✅ Processando pagamento para o usuário: ${userId}`);
+
+    // Calcula a data de expiração (normalmente 30 dias para mensal ou 1 ano)
+    // O Stripe envia isso em 'current_period_end'
+    const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
+    const endsAt = new Date(subscription.current_period_end * 1000).toISOString();
+
+    // 1. Atualiza a tabela STORES
+    const { error: storeError } = await supabase
+      .from("stores")
+      .update({
+        subscription_status: "active",
+        subscription_ends_at: endsAt,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", userId);
+
+    // 2. Atualiza a tabela USERS (Se você tiver a coluna lá)
+    const { error: userError } = await supabase
+      .from("users")
+      .update({
+        subscription_status: "active",
+      })
+      .eq("id", userId);
+
+    if (storeError || userError) {
+      console.error("❌ Erro ao atualizar banco de dados:", storeError || userError);
+      return NextResponse.json({ error: "Database update failed" }, { status: 500 });
+    }
+
+    console.log(`🚀 Acesso liberado com sucesso para ${userId} até ${endsAt}`);
+  }
+
+  return NextResponse.json({ received: true });
 }
