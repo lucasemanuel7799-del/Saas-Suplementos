@@ -3,211 +3,314 @@
 import { useState, Suspense } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import { useRouter, useSearchParams } from "next/navigation";
-import { 
-  Loader2, 
-  Store, 
-  User, 
-  AlertCircle, 
-  Building2, 
-  UserCircle, 
-  CheckCircle2 
-} from "lucide-react";
+import { Loader2, Store, ArrowRight, CheckCircle2, AlertCircle, Building2, User, UserCircle } from "lucide-react";
 import Link from "next/link";
 
+// --- Função auxiliar para máscara de CNPJ ---
+const formatCNPJ = (value: string) => {
+  return value
+    .replace(/\D/g, "")
+    .replace(/^(\d{2})(\d)/, "$1.$2")
+    .replace(/^(\d{2})\.(\d{3})(\d)/, "$1.$2.$3")
+    .replace(/\.(\d{3})(\d)/, ".$1/$2")
+    .replace(/(\d{4})(\d)/, "$1-$2")
+    .slice(0, 18);
+};
+
+// --- Componente do Formulário ---
 function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const supabase = createClient();
-  const sessionId = searchParams.get("session_id");
 
+  // Verifica se veio do Stripe (Pagamento Confirmado)
+  const sessionId = searchParams.get("session_id");
+  const isPaidFlow = !!sessionId;
+
+  // Estados dos Campos
+  const [personType, setPersonType] = useState<"pf" | "pj">("pf");
+  const [ownerName, setOwnerName] = useState("");
+  const [storeName, setStoreName] = useState("");
+  const [cnpj, setCnpj] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  
+  // Estados de Interface
   const [loading, setLoading] = useState(false);
   const [errorMsg, setErrorMsg] = useState("");
-  const [step, setStep] = useState(1);
-  const [accountType, setAccountType] = useState<'PF' | 'PJ'>('PF');
 
-  const [formData, setFormData] = useState({
-    name: "",
-    email: "",
-    password: "",
-    cnpj: "",
-    storeName: "",
-    storeSlug: "",
-  });
-
-  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const { name, value } = e.target;
-    if (name === "storeName") {
-      // Gera o slug automaticamente a partir do nome da loja
-      const slug = value.toLowerCase()
-        .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-        .replace(/[^a-z0-9]/g, "-")
-        .replace(/-+/g, "-");
-      setFormData(prev => ({ ...prev, storeName: value, storeSlug: slug }));
-    } else {
-      setFormData(prev => ({ ...prev, [name]: value }));
-    }
-  };
-
-  const handleNextStep = () => {
-    if (formData.name && formData.email && formData.password.length >= 6) {
-      if (accountType === 'PJ' && formData.cnpj.length < 14) {
-        setErrorMsg("Por favor, insira um CNPJ válido.");
-        return;
-      }
-      setStep(2);
-      setErrorMsg("");
-    } else {
-      setErrorMsg("Preencha os dados obrigatórios corretamente.");
-    }
-  };
-
-  const handleFinalSubmit = async () => {
-    if (loading) return;
+  async function handleRegister(e: React.FormEvent) {
+    e.preventDefault();
     setLoading(true);
     setErrorMsg("");
 
+    // Validação de CNPJ
+    if (personType === "pj" && cnpj.length < 14) {
+        setErrorMsg("Por favor, preencha um CNPJ válido.");
+        setLoading(false);
+        return;
+    }
+
     try {
-      // 1. BACKEND: Cria Auth e Tabela 'users' (Assinatura/Stripe)
-      const response = await fetch("/api/auth/register", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ 
-          ...formData, 
-          sessionId 
-        }),
+      // 1. CRIAÇÃO DA CONTA NO AUTH
+      // Enviamos os dados para salvar no metadata. 
+      // O Trigger SQL (handle_new_user) vai ler isso e criar as linhas em 'users' e 'stores'.
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            full_name: ownerName,  // Vai para users.full_name
+            store_name: storeName, // Vai para stores.name
+            person_type: personType,
+            document: personType === 'pj' ? cnpj.replace(/\D/g, "") : null,
+          },
+        },
       });
 
-      const data = await response.json();
-      if (!response.ok) throw new Error(data.error || "Erro ao registrar usuário.");
+      if (authError) throw authError;
 
-      // 2. LOGIN: Autentica para realizar operações no banco via browser
-      const { error: loginError } = await supabase.auth.signInWithPassword({
-        email: formData.email,
-        password: formData.password,
+      // 2. LOGIN AUTOMÁTICO (Garante a sessão)
+      const { error: signInError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
       });
-      if (loginError) throw loginError;
 
-      // 3. RECUPERAR ID: Pega o ID do usuário recém-criado
-      const { data: userData } = await supabase.auth.getUser();
-      const userId = userData.user?.id;
+      if (signInError) throw signInError;
 
-      if (!userId) throw new Error("Não foi possível recuperar o ID do usuário.");
+      const userId = authData.user?.id;
 
-      // 4. TABELA STORES: Salva dados da loja usando o ID do usuário como ID da loja (1:1)
-      const { error: storeError } = await supabase.from("stores").upsert({
-        id: userId,                   // O ID da loja é identico ao do usuário
-        owner_id: userId,             // Mantemos a referência do dono
-        name: formData.storeName,
-        slug: formData.storeSlug,
-        cnpj: accountType === 'PJ' ? formData.cnpj : null, // Salva o CNPJ apenas se for PJ
-      }, { onConflict: 'id' });
-
-      if (storeError) {
-        if (storeError.code === '23505') throw new Error("Este link de loja já está em uso.");
-        throw storeError;
+      // 3. SE FOR PAGO, ATIVA O PLANO
+      if (isPaidFlow && userId) {
+        await supabase
+          .from("users")
+          .update({
+            subscription_status: 'active',
+            plan_type: 'pro',
+            trial_ends_at: null,
+            stripe_customer_id: sessionId
+          })
+          .eq("id", userId);
       }
 
-      // 5. SUCESSO: Redireciona para o Dashboard
-      router.refresh();
-      router.push("/admin");
+      // --- CORREÇÃO DE REDIRECIONAMENTO (Race Condition Fix) ---
+      // O banco de dados pode demorar alguns milissegundos para rodar o Trigger e criar o usuário na tabela 'users'.
+      // Se redirecionarmos antes disso, o AdminLayout vai bloquear o acesso.
+      // Então, esperamos até o usuário aparecer na tabela.
+      
+      let userCreated = false;
+      let attempts = 0;
+
+      if (userId) {
+        while (!userCreated && attempts < 10) { // Tenta por ~5 segundos
+             // Pergunta pro banco: "O usuário já existe na tabela pública?"
+             const { data: checkUser } = await supabase
+                .from("users")
+                .select("id")
+                .eq("id", userId)
+                .single();
+             
+             if (checkUser) {
+                userCreated = true; // Sucesso! O Trigger terminou.
+             } else {
+                // Espera 500ms antes de tentar de novo
+                await new Promise(resolve => setTimeout(resolve, 500));
+                attempts++;
+             }
+        }
+      }
+
+      if (!userCreated) {
+          console.warn("Aviso: Demora na criação do banco de dados. Tentando redirecionar mesmo assim...");
+      }
+
+      // 4. REDIRECIONAMENTO FINAL
+      // Usamos window.location.href para forçar o recarregamento dos cookies
+      window.location.href = "/admin";
 
     } catch (err: any) {
-      setErrorMsg(err.message || "Erro inesperado.");
+      console.error(err);
+      setErrorMsg(err.message || "Erro ao criar conta. Tente novamente.");
       setLoading(false);
     }
-  };
-
-  if (!sessionId) {
-    return (
-      <div className="flex min-h-screen items-center justify-center bg-[#09090b] text-white p-6">
-        <div className="text-center p-8 bg-zinc-900/50 rounded-3xl border border-zinc-800 backdrop-blur-md max-w-md">
-          <AlertCircle className="mx-auto mb-4 text-red-500" size={48} />
-          <h1 className="text-2xl font-bold mb-2">Checkout Necessário</h1>
-          <p className="text-zinc-400 mb-6">Você precisa concluir o pagamento para acessar esta página.</p>
-          <Link href="/landing#planos" className="block w-full bg-blue-600 py-4 rounded-xl font-bold hover:bg-blue-700">Ver Planos</Link>
-        </div>
-      </div>
-    );
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-[#09090b] px-4" 
-         onKeyDown={(e) => {
-           if (e.key === 'Enter') {
-             e.preventDefault();
-             step === 1 ? handleNextStep() : handleFinalSubmit();
-           }
-         }}>
-      <div className="w-full max-w-lg bg-zinc-900/40 p-8 border border-zinc-800 rounded-2xl backdrop-blur-md shadow-2xl">
+    <div className="relative w-full max-w-md p-4 animate-in fade-in zoom-in duration-500 z-10">
+      
+      {/* CABEÇALHO */}
+      <div className="mb-6 text-center flex flex-col items-center">
+        <div className={`mb-4 flex h-14 w-14 items-center justify-center rounded-xl text-white shadow-xl ${isPaidFlow ? 'bg-green-600 shadow-green-900/20' : 'bg-orange-600 shadow-orange-900/20'}`}>
+           {isPaidFlow ? <CheckCircle2 size={28} /> : <Store size={28} />}
+        </div>
+        <h1 className="text-xl font-bold tracking-tight text-white">
+          {isPaidFlow ? "Pagamento Confirmado" : "Teste Grátis 30 Dias"}
+        </h1>
+        <p className="text-sm text-zinc-400 mt-1">
+          {isPaidFlow ? "Sua assinatura está ativa." : "Crie sua loja em menos de 1 minuto."}
+        </p>
+      </div>
+
+      {/* FORMULÁRIO */}
+      <form onSubmit={handleRegister} className="space-y-3 rounded-2xl border border-white/5 bg-zinc-900/40 p-5 shadow-2xl backdrop-blur-md">
         
-        <div className="mb-8 text-center">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-green-500/10 text-green-500 text-xs font-bold border border-green-500/20 mb-4">
-            <CheckCircle2 size={14} /> Pagamento Confirmado
-          </div>
-          <h1 className="text-2xl font-bold text-white">Configure seu Painel</h1>
-        </div>
-
-        <div className="mb-6 flex gap-2">
-          <div className={`h-1.5 flex-1 rounded-full transition-all ${step >= 1 ? 'bg-blue-600' : 'bg-zinc-800'}`} />
-          <div className={`h-1.5 flex-1 rounded-full transition-all ${step >= 2 ? 'bg-blue-600' : 'bg-zinc-800'}`} />
-        </div>
-
         {errorMsg && (
-          <div className="mb-4 p-3 bg-red-500/10 border border-red-500/20 text-red-500 text-sm rounded-lg flex items-center gap-2">
-            <AlertCircle size={16}/> {errorMsg}
-          </div>
+            <div className="flex items-center gap-2 rounded-lg bg-red-500/10 p-3 text-xs text-red-400 border border-red-500/20 animate-in slide-in-from-top-2">
+                <AlertCircle size={14} />
+                {errorMsg}
+            </div>
         )}
 
-        <div className="space-y-4">
-          {step === 1 ? (
-            <div className="space-y-4 animate-in slide-in-from-left-4 duration-300">
-              <h2 className="text-blue-400 font-bold text-xs uppercase flex items-center gap-2"><User size={14}/> Responsável</h2>
-              <input name="name" placeholder="Seu Nome" value={formData.name} onChange={handleChange} className="w-full bg-black/40 border border-zinc-800 p-3 rounded-lg text-white outline-none focus:border-blue-600" />
-              
-              <div className="grid grid-cols-2 gap-2">
-                <button type="button" onClick={() => setAccountType('PF')} className={`p-3 rounded-lg border text-sm transition-all ${accountType === 'PF' ? 'border-blue-600 bg-blue-600/10 text-blue-500' : 'border-zinc-800 text-zinc-500'}`}>Pessoa Física</button>
-                <button type="button" onClick={() => setAccountType('PJ')} className={`p-3 rounded-lg border text-sm transition-all ${accountType === 'PJ' ? 'border-blue-600 bg-blue-600/10 text-blue-500' : 'border-zinc-800 text-zinc-500'}`}>Pessoa Jurídica</button>
-              </div>
+        {/* --- SEÇÃO 1: RESPONSÁVEL --- */}
+        <div className="space-y-3 pt-1">
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-white/5 pb-1 mb-2">
+                Dados do Responsável
+            </p>
 
-              {accountType === 'PJ' && (
-                <input name="cnpj" placeholder="CNPJ da Empresa" value={formData.cnpj} onChange={handleChange} className="w-full bg-black/40 border border-zinc-800 p-3 rounded-lg text-white outline-none focus:border-blue-600" />
-              )}
-
-              <input name="email" type="email" placeholder="Seu melhor e-mail" value={formData.email} onChange={handleChange} className="w-full bg-black/40 border border-zinc-800 p-3 rounded-lg text-white outline-none focus:border-blue-600" />
-              <input name="password" type="password" placeholder="Senha (mín. 6 dígitos)" value={formData.password} onChange={handleChange} className="w-full bg-black/40 border border-zinc-800 p-3 rounded-lg text-white outline-none focus:border-blue-600" />
-              <button type="button" onClick={handleNextStep} className="w-full bg-blue-600 py-3 rounded-lg font-bold hover:bg-blue-700 transition-all text-white">Ir para dados da loja</button>
-            </div>
-          ) : (
-            <div className="space-y-4 animate-in slide-in-from-right-4 duration-300">
-              <h2 className="text-blue-400 font-bold text-xs uppercase flex items-center gap-2"><Store size={14}/> Identidade da Loja</h2>
-              <input name="storeName" placeholder="Nome da sua Loja" value={formData.storeName} onChange={handleChange} className="w-full bg-black/40 border border-zinc-800 p-3 rounded-lg text-white outline-none focus:border-blue-600" />
-              
-              <div>
-                <label className="text-[10px] text-zinc-500 uppercase font-bold ml-1">Endereço do seu site</label>
-                <div className="relative flex items-center mt-1">
-                  <span className="absolute left-3 text-zinc-500 text-sm">suplesaas.com/</span>
-                  <input name="storeSlug" value={formData.storeSlug} onChange={(e) => setFormData({...formData, storeSlug: e.target.value})} className="w-full bg-black/40 border border-zinc-800 p-3 pl-32 rounded-lg text-white outline-none focus:border-blue-600 font-mono text-sm" />
+            <div className="space-y-1">
+                <label className="text-xs font-medium text-zinc-400">Nome Completo</label>
+                <div className="relative">
+                    <UserCircle className="absolute left-3 top-2.5 text-zinc-500" size={16} />
+                    <input
+                        type="text"
+                        required
+                        value={ownerName}
+                        onChange={(e) => setOwnerName(e.target.value)}
+                        className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 pl-10 p-2.5 text-sm text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 transition-colors placeholder:text-zinc-600"
+                        placeholder="Ex: Lucas Emanuel"
+                    />
                 </div>
-              </div>
-
-              <div className="grid grid-cols-2 gap-2 pt-2">
-                <button type="button" onClick={() => setStep(1)} className="p-3 border border-zinc-800 rounded-lg text-zinc-400 hover:bg-zinc-800 transition-all">Voltar</button>
-                <button type="button" onClick={handleFinalSubmit} disabled={loading} className="bg-blue-600 p-3 rounded-lg font-bold text-white flex justify-center items-center hover:bg-blue-700 transition-all disabled:opacity-50">
-                  {loading ? <Loader2 className="animate-spin" size={20} /> : "Criar minha loja"}
-                </button>
-              </div>
             </div>
-          )}
+
+            {/* PF / PJ Toggle */}
+            <div className="grid grid-cols-2 gap-2">
+                <button
+                    type="button"
+                    onClick={() => setPersonType("pf")}
+                    className={`flex items-center justify-center gap-2 p-2 rounded-lg border transition-all ${
+                        personType === "pf" ? "bg-orange-500/10 border-orange-500 text-orange-500" : "bg-zinc-950/30 border-zinc-800 text-zinc-500 hover:text-zinc-300"
+                    }`}
+                >
+                    <User size={14} /> <span className="text-xs font-bold">Pessoa Física</span>
+                </button>
+                <button
+                    type="button"
+                    onClick={() => setPersonType("pj")}
+                    className={`flex items-center justify-center gap-2 p-2 rounded-lg border transition-all ${
+                        personType === "pj" ? "bg-orange-500/10 border-orange-500 text-orange-500" : "bg-zinc-950/30 border-zinc-800 text-zinc-500 hover:text-zinc-300"
+                    }`}
+                >
+                    <Building2 size={14} /> <span className="text-xs font-bold">Pessoa Jurídica</span>
+                </button>
+            </div>
+
+             {/* Campo Condicional de CNPJ */}
+             {personType === "pj" && (
+                <div className="space-y-1 animate-in slide-in-from-top-1">
+                    <label className="text-xs font-medium text-zinc-400">CNPJ</label>
+                    <input
+                        type="text"
+                        required
+                        value={cnpj}
+                        maxLength={18}
+                        onChange={(e) => setCnpj(formatCNPJ(e.target.value))}
+                        className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 p-2.5 text-sm text-white focus:border-orange-500 focus:outline-none transition-colors placeholder:text-zinc-600"
+                        placeholder="00.000.000/0001-00"
+                    />
+                </div>
+            )}
         </div>
+
+        {/* --- SEÇÃO 2: LOJA E ACESSO --- */}
+        <div className="space-y-3 pt-2">
+            <p className="text-[10px] font-bold text-zinc-500 uppercase tracking-widest border-b border-white/5 pb-1 mb-2">
+                Dados da Loja & Acesso
+            </p>
+
+            <div className="space-y-1">
+                <label className="text-xs font-medium text-zinc-400">Nome da Loja</label>
+                <div className="relative">
+                    <Store className="absolute left-3 top-2.5 text-zinc-500" size={16} />
+                    <input
+                        type="text"
+                        required
+                        value={storeName}
+                        onChange={(e) => setStoreName(e.target.value)}
+                        className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 pl-10 p-2.5 text-sm text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 transition-colors placeholder:text-zinc-600"
+                        placeholder="Ex: Suplementos Top"
+                    />
+                </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-1">
+                    <label className="text-xs font-medium text-zinc-400">Email</label>
+                    <input
+                        type="email"
+                        required
+                        value={email}
+                        onChange={(e) => setEmail(e.target.value)}
+                        className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 p-2.5 text-sm text-white focus:border-orange-500 focus:outline-none transition-colors placeholder:text-zinc-600"
+                        placeholder="loja@email.com"
+                    />
+                </div>
+                <div className="space-y-1">
+                    <label className="text-xs font-medium text-zinc-400">Senha</label>
+                    <input
+                        type="password"
+                        required
+                        value={password}
+                        onChange={(e) => setPassword(e.target.value)}
+                        className="w-full rounded-lg border border-zinc-800 bg-zinc-950/50 p-2.5 text-sm text-white focus:border-orange-500 focus:outline-none transition-colors placeholder:text-zinc-600"
+                        placeholder="••••••"
+                    />
+                </div>
+            </div>
+        </div>
+
+        {/* Botão de Cadastro */}
+        <button
+            type="submit"
+            disabled={loading}
+            className={`w-full rounded-xl py-3 text-sm font-bold text-white transition-all hover:brightness-110 active:scale-95 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg mt-2 ${
+                isPaidFlow ? "bg-green-600 shadow-green-600/20" : "bg-gradient-to-r from-orange-600 to-orange-500 shadow-orange-600/20"
+            }`}
+        >
+            {loading ? (
+                <div className="flex items-center justify-center gap-2">
+                    <Loader2 className="animate-spin h-4 w-4" />
+                    Preparando Loja...
+                </div>
+            ) : (
+                <span className="flex items-center justify-center gap-2">
+                   {isPaidFlow ? "Ativar Conta" : "Criar Loja Grátis"} <ArrowRight size={16}/>
+                </span>
+            )}
+        </button>
+      </form>
+      
+      <div className="mt-4 text-center">
+        <Link href="/admin/login" className="text-xs text-zinc-500 hover:text-white transition-colors">
+            Já tem conta? <span className="underline">Fazer Login</span>
+        </Link>
       </div>
     </div>
   );
 }
 
-export default function AdminRegisterPage() {
-  return (
-    <Suspense fallback={<div className="min-h-screen bg-[#09090b] flex items-center justify-center text-white"><Loader2 className="animate-spin" /></div>}>
-      <RegisterForm />
-    </Suspense>
-  );
+// Wrapper Principal (Obrigatório para Suspense / useSearchParams)
+export default function RegisterPage() {
+    return (
+        <div className="relative flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-100 selection:bg-orange-500 selection:text-white font-sans overflow-hidden py-10">
+            {/* Efeitos de Fundo */}
+            <div className="fixed inset-0 z-0 pointer-events-none">
+                <div className="absolute inset-0 bg-[linear-gradient(to_right,#80808012_1px,transparent_1px),linear-gradient(to_bottom,#80808012_1px,transparent_1px)] bg-[size:24px_24px]"></div>
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-[500px] h-[500px] bg-orange-600 opacity-10 blur-[100px] rounded-full" />
+            </div>
+            
+            <Suspense fallback={<div className="text-white font-bold animate-pulse">Carregando sistema...</div>}>
+                <RegisterForm />
+            </Suspense>
+        </div>
+    );
 }

@@ -1,190 +1,165 @@
 "use client";
 
 import { useState } from "react";
-import { supabase } from "@/lib/supabase"; 
-import { useRouter } from "next/navigation";
-import { Loader2, UserPlus, AlertCircle, ArrowLeft } from "lucide-react";
-import Link from "next/link";
+import { createClient } from "@/lib/supabase-browser";
+import { useRouter, useSearchParams } from "next/navigation";
+import { Loader2, User, Mail, Lock, Phone, ArrowRight, Calendar } from "lucide-react";
 
-export default function RegisterPage() {
+export default function CustomerRegister() {
   const router = useRouter();
-  
+  const searchParams = useSearchParams();
+  const supabase = createClient();
+  const storeId = searchParams.get("store_id");
+
   const [loading, setLoading] = useState(false);
-  const [errorMsg, setErrorMsg] = useState("");
-  
-  // Campos de Cadastro
-  const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
-  const [phone, setPhone] = useState("");
-  const [birthDate, setBirthDate] = useState(""); 
+  const [formData, setFormData] = useState({
+    name: "",
+    email: "",
+    password: "",
+    phone: "",
+    birthDate: "", // Novo estado para a data
+  });
 
-  // Função auxiliar para forçar o cookie (Igual ao Login)
-  const setAuthCookie = (accessToken: string) => {
-    document.cookie = `sb-auth-token=${accessToken}; path=/; max-age=604800; SameSite=Lax`;
-  };
-
-  async function handleRegister(e: React.FormEvent) {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setErrorMsg("");
     setLoading(true);
 
     try {
-      // 1. Criar usuário no Supabase
-      const { data, error } = await supabase.auth.signUp({
-        email,
-        password,
+      // 1. Criar Auth
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email: formData.email,
+        password: formData.password,
         options: {
-          data: {
-            full_name: fullName,
-            phone: phone,
-            birth_date: birthDate,
-          },
-        },
+          data: { full_name: formData.name }
+        }
       });
 
-      if (error) throw error;
+      if (authError) throw authError;
+      if (!authData.user) throw new Error("Erro ao criar conta.");
 
-      // 2. Tenta fazer login automático imediatamente após criar
-      const { data: loginData, error: loginError } = await supabase.auth.signInWithPassword({ 
-        email, 
-        password 
+      // 2. Salvar na Tabela Global (COM A NOVA DATA)
+      const { error: customerError } = await supabase.from("customers").upsert({
+        id: authData.user.id,
+        full_name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        birth_date: formData.birthDate, // Salvando a data aqui
       });
-      
-      // Se conseguir logar (significa que não precisa confirmar email ou já confirmou)
-      if (!loginError && loginData.session) {
-        setAuthCookie(loginData.session.access_token);
-        window.location.href = "/"; // Redireciona para Home com refresh
-      } else {
-        // Se precisar de confirmação de email
-        alert("Conta criada com sucesso! Verifique seu e-mail para confirmar.");
-        router.push("/login");
+
+      if (customerError) throw customerError;
+
+      // 3. Vincular à Loja
+      if (storeId) {
+        await supabase.from("store_customers").upsert({
+          store_id: storeId,
+          customer_id: authData.user.id
+        });
       }
 
+      router.push("/perfil");
     } catch (error: any) {
-      console.error(error);
-      setErrorMsg(error.message || "Erro ao criar conta. Verifique os dados.");
+      alert(error.message);
     } finally {
       setLoading(false);
     }
-  }
+  };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-black px-4 py-12 text-zinc-100">
-      
-      {/* Botão Voltar para Loja (Opcional, mas boa prática) */}
-      <div className="absolute top-6 left-6">
-        <Link href="/" className="flex items-center gap-2 text-sm text-zinc-500 hover:text-white transition-colors">
-          <ArrowLeft size={16} />
-          Voltar para a loja
-        </Link>
-      </div>
-
-      <div className="w-full max-w-md space-y-8 rounded-2xl border border-zinc-800 bg-zinc-900/50 p-8 shadow-xl backdrop-blur-sm">
-        
+    <div className="min-h-screen bg-white flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-md space-y-8">
         <div className="text-center">
-          <h2 className="mt-2 text-3xl font-bold tracking-tight text-white">
-            Crie sua conta
-          </h2>
-          <p className="mt-2 text-sm text-zinc-400">
-            Preencha seus dados para começar a comprar
-          </p>
+          <h1 className="text-3xl font-extrabold text-zinc-900">Criar sua conta</h1>
+          <p className="text-zinc-500 mt-2">Cadastre-se para acompanhar seus pedidos.</p>
         </div>
 
-        {errorMsg && (
-          <div className="flex items-center gap-2 rounded-lg bg-red-500/10 p-3 text-sm text-red-500 border border-red-500/20">
-            <AlertCircle size={16} />
-            <span>{errorMsg}</span>
-          </div>
-        )}
+        <form onSubmit={handleSubmit} className="space-y-4 mt-8">
 
-        <form className="mt-8 space-y-4" onSubmit={handleRegister}>
-          
-          <div>
-            <label className="text-xs font-medium text-zinc-400">Nome Completo</label>
-            <input
-              type="text"
-              required
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-800 bg-black/50 p-3 text-white focus:border-blue-600 focus:outline-none placeholder:text-zinc-600"
-              placeholder="Ex: Lucas Emanuel"
-            />
-          </div>
-          
-          <div className="grid grid-cols-2 gap-4">
-            <div>
-              <label className="text-xs font-medium text-zinc-400">Telefone</label>
+          {/* 1. Nome Completo (Largura Total) */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-zinc-400 uppercase ml-1">Nome Completo</label>
+            <div className="relative">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
               <input
-                type="tel"
                 required
-                value={phone}
-                onChange={(e) => setPhone(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-zinc-800 bg-black/50 p-3 text-white focus:border-blue-600 focus:outline-none placeholder:text-zinc-600"
-                placeholder="(00) 99999-9999"
-              />
-            </div>
-            <div>
-              <label className="text-xs font-medium text-zinc-400">Nascimento</label>
-              <input
-                type="date"
-                required
-                value={birthDate}
-                onChange={(e) => setBirthDate(e.target.value)}
-                className="mt-1 w-full rounded-lg border border-zinc-800 bg-black/50 p-3 text-white focus:border-blue-600 focus:outline-none [color-scheme:dark]"
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl py-3 pl-10 pr-4 outline-none focus:border-red-500 transition-all"
+                placeholder="Ex: João Silva"
+                onChange={e => setFormData({ ...formData, name: e.target.value })}
               />
             </div>
           </div>
 
-          <div>
-            <label className="text-xs font-medium text-zinc-400">E-mail</label>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-800 bg-black/50 p-3 text-white focus:border-blue-600 focus:outline-none placeholder:text-zinc-600"
-              placeholder="seu@email.com"
-            />
+          {/* 2. E-mail (Largura Total) */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-zinc-400 uppercase ml-1">E-mail</label>
+            <div className="relative">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+              <input
+                type="email" required
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl py-3 pl-10 pr-4 outline-none focus:border-red-500 transition-all"
+                placeholder="seu@email.com"
+                onChange={e => setFormData({ ...formData, email: e.target.value })}
+              />
+            </div>
           </div>
 
-          <div>
-            <label className="text-xs font-medium text-zinc-400">Senha</label>
-            <input
-              type="password"
-              required
-              minLength={6}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="mt-1 w-full rounded-lg border border-zinc-800 bg-black/50 p-3 text-white focus:border-blue-600 focus:outline-none placeholder:text-zinc-600"
-              placeholder="Mínimo 6 caracteres"
-            />
+          {/* 3. GRID: Data e Telefone (Lado a Lado) */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+            {/* Data de Nascimento */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-zinc-400 uppercase ml-1">Nascimento</label>
+              <div className="relative">
+                <Calendar className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                {/* Adicionei 'appearance-none' e 'block' para forçar a largura correta */}
+                <input
+                  type="date"
+                  required
+                  className="w-full block bg-zinc-50 border border-zinc-200 rounded-xl py-3 pl-10 pr-4 outline-none focus:border-red-500 transition-all text-zinc-600 appearance-none"
+                  onChange={e => setFormData({ ...formData, birthDate: e.target.value })}
+                />
+              </div>
+            </div>
+
+            {/* Telefone */}
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-zinc-400 uppercase ml-1">Telefone</label>
+              <div className="relative">
+                <Phone className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+                <input
+                  className="w-full bg-zinc-50 border border-zinc-200 rounded-xl py-3 pl-10 pr-4 outline-none focus:border-red-500 transition-all"
+                  placeholder="(00) 00000-0000"
+                  onChange={e => setFormData({ ...formData, phone: e.target.value })}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* 4. Senha (Largura Total) */}
+          <div className="space-y-1">
+            <label className="text-xs font-bold text-zinc-400 uppercase ml-1">Senha</label>
+            <div className="relative">
+              <Lock className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-400" size={18} />
+              <input
+                type="password" required
+                className="w-full bg-zinc-50 border border-zinc-200 rounded-xl py-3 pl-10 pr-4 outline-none focus:border-red-500 transition-all"
+                placeholder="••••••••"
+                onChange={e => setFormData({ ...formData, password: e.target.value })}
+              />
+            </div>
           </div>
 
           <button
             type="submit"
             disabled={loading}
-            className="group relative flex w-full justify-center rounded-lg bg-blue-600 px-4 py-3 text-sm font-semibold text-white transition-colors hover:bg-blue-500 focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-70 mt-2"
+            className="w-full bg-red-600 text-white font-bold py-4 rounded-xl shadow-lg shadow-red-200 hover:bg-red-700 active:scale-[0.98] transition-all flex items-center justify-center gap-2 mt-2"
           >
-            {loading ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <>Criar Conta Grátis <UserPlus className="ml-2 h-4 w-4" /></>
-            )}
+            {loading ? <Loader2 className="animate-spin" /> : <>Criar conta <ArrowRight size={18} /></>}
           </button>
         </form>
 
-        <div className="text-center pt-2 border-t border-zinc-800/50 mt-4">
-          <p className="text-sm text-zinc-400">
-            Já tem uma conta?{" "}
-            <Link 
-              href="/login"
-              className="font-medium text-blue-500 hover:text-blue-400 transition-colors hover:underline"
-            >
-              Fazer login
-            </Link>
-          </p>
-        </div>
+        <p className="text-center text-sm text-zinc-500">
+          Já tem uma conta? <a href="/login" className="text-red-600 font-bold">Fazer login</a>
+        </p>
       </div>
     </div>
   );

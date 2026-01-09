@@ -1,85 +1,185 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { createClient } from "@/lib/supabase-browser";
 import { 
   LayoutDashboard, 
-  ShoppingCart, // Pedidos
-  Package,      // Produtos
-  Users,        // Clientes
-  Box,          // Estoque
-  DollarSign,   // Financeiro
+  ShoppingBag, 
+  Package, 
+  Users, 
   Settings, 
-  LogOut,
+  LogOut, 
+  Store,
+  Building2,
+  ClipboardList, // Stock
+  TicketPercent, // Promoções
+  Calculator,    // PDV
+  CircleDollarSign // Financeiro (Novo)
 } from "lucide-react";
+import { createClient } from "@/lib/supabase-browser";
+
+// Lista Completa de Itens do Menu
+const menuItems = [
+  { name: "Visão Geral", icon: LayoutDashboard, path: "/admin" },
+  { name: "Pedidos", icon: ShoppingBag, path: "/admin/pedidos" },
+  { name: "PDV / Caixa", icon: Calculator, path: "/admin/pdv" },
+  { name: "Produtos", icon: Package, path: "/admin/produtos" },
+  { name: "Stock", icon: ClipboardList, path: "/admin/inventory" },
+  { name: "Clientes", icon: Users, path: "/admin/clientes" },
+  { name: "Financeiro", icon: CircleDollarSign, path: "/admin/financeiro" }, // <--- Novo Link
+  { name: "Promoções", icon: TicketPercent, path: "/admin/promocoes" },
+  { name: "Configurações", icon: Settings, path: "/admin/settings" },
+];
 
 export default function AdminSidebar() {
   const pathname = usePathname();
   const router = useRouter();
   const supabase = createClient();
+  
+  // Estados
+  const [pendingCount, setPendingCount] = useState(0);
+  const [storeInfo, setStoreInfo] = useState({ name: "Carregando...", id: "" });
 
-  const menuItems = [
-    { icon: LayoutDashboard, label: "Visão Geral", href: "/admin" },
-    { icon: ShoppingCart, label: "Pedidos", href: "/admin/pedidos" },
-    { icon: Package, label: "Produtos", href: "/admin/produtos" },
-    { icon: Users, label: "Clientes", href: "/admin/clientes" },
-    { icon: Box, label: "Estoque", href: "/admin/inventory" },
-    { icon: DollarSign, label: "Financeiro", href: "/admin/financeiro" },
-    { icon: Settings, label: "Configurações", href: "/admin/configuracoes" },
-  ];
+  // Função unificada para buscar dados
+  const fetchData = async () => {
+    const { data: { user } } = await supabase.auth.getUser();
+    
+    if (!user) return;
 
-  async function handleLogout() {
+    // 1. Busca Informações da Loja
+    const { data: store } = await supabase
+        .from('stores')
+        .select('name, id')
+        .eq('id', user.id)
+        .single();
+    
+    if (store) {
+        setStoreInfo({ name: store.name, id: store.id });
+    }
+
+    // 2. Busca Contagem de Pedidos Pendentes
+    const { count } = await supabase
+      .from('orders')
+      .select('*', { count: 'exact', head: true })
+      .eq('store_id', user.id)
+      .eq('status', 'pending');
+
+    setPendingCount(count || 0);
+  };
+
+  useEffect(() => {
+    // Busca inicial
+    fetchData();
+
+    // Configura o Realtime para atualizar o contador de pedidos
+    const channel = supabase
+      .channel('sidebar-realtime')
+      .on(
+        'postgres_changes',
+        { event: '*', schema: 'public', table: 'orders' },
+        () => {
+            // Toda a vez que um pedido mudar, recarrega a contagem
+            fetchData();
+        }
+      )
+      .subscribe();
+
+    // Limpeza ao desmontar
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  const handleLogout = async () => {
     await supabase.auth.signOut();
-    router.refresh();
     router.push("/admin/login");
-  }
+    router.refresh();
+  };
 
   return (
-    <div className="flex h-full flex-col justify-between bg-zinc-900 p-4 text-zinc-100 border-r border-zinc-800">
+    <div className="flex flex-col h-full bg-zinc-950 border-r border-zinc-800 w-64 shrink-0 transition-all duration-300">
       
-      <div className="space-y-6">
-        {/* Logo */}
-        <div className="flex items-center gap-2 px-2 py-4">
-          <div className="flex h-8 w-8 items-center justify-center rounded bg-blue-600 text-white font-bold">
-            S
+      {/* LOGO */}
+      <div className="h-16 flex items-center px-6 border-b border-zinc-800/50">
+        <div className="flex items-center gap-2 text-white font-bold text-xl tracking-tight">
+          <div className="bg-gradient-to-br from-orange-500 to-orange-600 p-1.5 rounded-lg shadow-lg shadow-orange-500/20">
+            <Store size={20} className="text-white" />
           </div>
-          <span className="text-lg font-bold">SupleSaaS</span>
+          Supples
         </div>
-
-        {/* Menu */}
-        <nav className="space-y-1">
-          {menuItems.map((item) => {
-            // Verifica se a rota atual começa com o href do item (para manter ativo em subpáginas)
-            // Ex: /admin/produtos/novo manterá "Produtos" ativo
-            const isActive = pathname === item.href || (item.href !== "/admin" && pathname.startsWith(item.href));
-            
-            return (
-              <Link
-                key={item.href}
-                href={item.href}
-                className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
-                  isActive 
-                    ? "bg-blue-600/10 text-blue-500" 
-                    : "text-zinc-400 hover:bg-zinc-800 hover:text-white"
-                }`}
-              >
-                <item.icon size={18} />
-                {item.label}
-              </Link>
-            );
-          })}
-        </nav>
       </div>
 
-      {/* Botão Sair */}
-      <div className="border-t border-zinc-800 pt-4">
+      {/* NAVEGAÇÃO */}
+      <nav className="flex-1 py-6 px-3 space-y-1 overflow-y-auto scrollbar-thin scrollbar-thumb-zinc-800">
+        <p className="px-3 text-[10px] font-bold text-zinc-500 uppercase tracking-widest mb-2">
+            Gestão
+        </p>
+        
+        {menuItems.map((item) => {
+          const isActive = pathname === item.path;
+          const isOrders = item.name === "Pedidos";
+          
+          return (
+            <Link
+              key={item.path}
+              href={item.path}
+              className={`group flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium transition-all duration-200 ${
+                isActive
+                  ? "bg-zinc-900 text-white shadow-inner border border-zinc-800"
+                  : "text-zinc-400 hover:text-zinc-100 hover:bg-zinc-900/50"
+              }`}
+            >
+              <item.icon
+                size={18}
+                className={`transition-colors ${
+                  isActive ? "text-orange-500" : "text-zinc-500 group-hover:text-zinc-300"
+                }`}
+              />
+              
+              <span>{item.name}</span>
+
+              {/* CONTADOR DE PEDIDOS (Badge Laranja) */}
+              {isOrders && pendingCount > 0 && (
+                <div className="ml-auto flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-white text-[10px] font-bold shadow-[0_0_10px_rgba(249,115,22,0.6)] animate-pulse">
+                    {pendingCount > 99 ? "+99" : pendingCount}
+                </div>
+              )}
+              
+              {/* Indicador de Ativo (Bolinha Laranja subtil) */}
+              {isActive && (!isOrders || pendingCount === 0) && (
+                <div className="ml-auto w-1.5 h-1.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]" />
+              )}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* RODAPÉ (INFO DA LOJA + LOGOUT) */}
+      <div className="p-4 border-t border-zinc-800/50 space-y-3 bg-zinc-950">
+        
+        {/* Card da Loja Conectada */}
+        <div className="bg-zinc-900/50 border border-zinc-800 p-3 rounded-xl flex items-center gap-3">
+            <div className="h-8 w-8 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 shrink-0 border border-zinc-700">
+                <Building2 size={16} />
+            </div>
+            <div className="overflow-hidden min-w-0">
+                <p className="text-[10px] uppercase font-bold text-zinc-500 truncate">Loja Conectada</p>
+                <p className="text-sm font-bold text-white truncate leading-tight" title={storeInfo.name}>
+                    {storeInfo.name}
+                </p>
+                <p className="text-[10px] text-zinc-600 font-mono mt-0.5 truncate">
+                    ID: {storeInfo.id.slice(0, 8)}...
+                </p>
+            </div>
+        </div>
+
         <button
           onClick={handleLogout}
-          className="flex w-full items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium text-red-400 hover:bg-red-500/10 transition-colors"
+          className="flex w-full items-center gap-3 px-3 py-2.5 rounded-xl text-sm font-medium text-zinc-400 hover:text-red-400 hover:bg-red-500/10 transition-all group"
         >
-          <LogOut size={18} />
-          Sair da conta
+          <LogOut size={18} className="group-hover:text-red-400 text-zinc-500 transition-colors" />
+          Sair da Conta
         </button>
       </div>
     </div>
