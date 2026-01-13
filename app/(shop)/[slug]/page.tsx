@@ -1,55 +1,68 @@
 import { createClient } from "@/lib/supabase-server";
 import { notFound } from "next/navigation";
-import StoreFront from "@/components/shop/StoreFront"; // Importe o componente novo
+import StoreFront from "@/components/shop/StoreFront";
+import StoreLogin from "@/components/shop/StoreLogin";
 
-export const revalidate = 0;
+// Função auxiliar para calcular se está aberto
+function checkStoreOpen(opensAt: string | null, closesAt: string | null) {
+  if (!opensAt || !closesAt) return true; // Se não configurou, assume aberto
 
-interface PageProps {
-  params: Promise<{ slug: string }>;
-}
-
-function checkIsOpen(opensAt: string | null, closesAt: string | null) {
-  if (!opensAt || !closesAt) return true;
   const now = new Date();
-  const brazilTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
-  const currentMinutes = brazilTime.getHours() * 60 + brazilTime.getMinutes();
-  const [oh, om] = opensAt.split(':').map(Number);
-  const [ch, cm] = closesAt.split(':').map(Number);
-  return currentMinutes >= (oh * 60 + om) && currentMinutes < (ch * 60 + cm);
+  const brTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+  
+  const currentMinutes = brTime.getHours() * 60 + brTime.getMinutes();
+
+  const [openHour, openMinute] = opensAt.split(':').map(Number);
+  const [closeHour, closeMinute] = closesAt.split(':').map(Number);
+
+  const startMinutes = openHour * 60 + openMinute;
+  const endMinutes = closeHour * 60 + closeMinute;
+
+  if (endMinutes < startMinutes) {
+    return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
+  }
+
+  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
 }
 
-export default async function ShopPage({ params }: PageProps) {
+// CORREÇÃO AQUI: params agora é uma Promise
+export default async function StorePage({ params }: { params: Promise<{ slug: string }> }) {
+  
+  // 1. DESEMBRULHAR OS PARAMS (Obrigatório no Next.js 15)
   const { slug } = await params;
+
   const supabase = await createClient();
 
-  // 1. Busca Loja
+  // 2. Busca a Loja (Usando a variável 'slug' que pegamos acima)
   const { data: store } = await supabase
     .from("stores")
     .select("*")
-    .eq("slug", slug)
+    .eq("slug", slug) 
     .single();
 
   if (!store) return notFound();
 
-  // 2. Calcula Status
-  const isOpen = checkIsOpen(store.opens_at, store.closes_at);
+  // 3. Verifica Usuário
+  const { data: { session } } = await supabase.auth.getSession();
 
-  // 3. Busca Produtos (INCLUINDO A COLUNA CATEGORY)
-  let products: any[] = [];
-  const { data: p } = await supabase
+  // --- MODO: LOGIN ---
+  if (!session) {
+    return <StoreLogin store={store as any} />;
+  }
+
+  // --- MODO: VITRINE ---
+  const isOpen = checkStoreOpen(store.opens_at, store.closes_at);
+
+  const { data: products } = await supabase
     .from("products")
-    .select("id, name, price, stock, image_url, category") // <--- Importante pedir a category aqui
+    .select("*")
     .eq("store_id", store.id)
-    .gt("stock", 0)
-    .order("name", { ascending: true });
-  
-  if (p) products = p;
+    .eq("active", true);
 
-  // 4. Renderiza o Componente Cliente
   return (
     <StoreFront 
-      store={store} 
-      products={products} 
+      store={store as any} 
+      products={(products || []) as any} 
       isOpen={isOpen} 
     />
   );
