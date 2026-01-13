@@ -4,16 +4,19 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import { 
   Store, Save, Camera, Loader2, Copy, Check, Globe, 
-  Palette, Clock, CreditCard, Banknote, QrCode, Link as LinkIcon, Smartphone
+  Palette, Clock, CreditCard, Banknote, QrCode, Link as LinkIcon
 } from "lucide-react";
+import { toast } from "sonner";
 
-// Lista de pagamentos com Ícones Profissionais (Nada de Emojis)
 const AVAILABLE_PAYMENTS = [
   { id: "pix", label: "Pix Instantâneo", icon: <QrCode size={20} /> },
   { id: "card_machine", label: "Cartão (Maquininha)", icon: <CreditCard size={20} /> },
   { id: "card_link", label: "Pagamento via Link", icon: <LinkIcon size={20} /> },
   { id: "cash", label: "Dinheiro / Espécie", icon: <Banknote size={20} /> },
 ];
+
+// NOME DO SEU SISTEMA (Para simulação visual)
+const SYSTEM_DOMAIN = "quantis.app"; 
 
 export default function SettingsPage() {
   const supabase = createClient();
@@ -24,7 +27,7 @@ export default function SettingsPage() {
   
   const [storeId, setStoreId] = useState<string | null>(null);
   const [logoUrl, setLogoUrl] = useState<string | null>(null);
-  const [baseUrl, setBaseUrl] = useState("");
+  const [baseUrl, setBaseUrl] = useState(""); // URL REAL (localhost ou vercel)
 
   const [formData, setFormData] = useState({
     name: "", slug: "", phone: "", address: "",
@@ -37,7 +40,11 @@ export default function SettingsPage() {
 
   useEffect(() => {
     async function loadStore() {
-      setBaseUrl(window.location.origin);
+      // Pega a URL Real (funcional)
+      if (typeof window !== 'undefined') {
+          setBaseUrl(window.location.origin);
+      }
+
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
@@ -47,9 +54,14 @@ export default function SettingsPage() {
         setStoreId(data.id);
         setLogoUrl(data.logo_url);
         setFormData({
-          name: data.name || "", slug: data.slug || "", phone: data.phone || "", address: data.address || "",
-          primaryColor: data.primary_color || "#18181b", secondaryColor: data.secondary_color || "#dc2626",
-          opensAt: data.opens_at || "08:00", closesAt: data.closes_at || "22:00",
+          name: data.name || "", 
+          slug: data.slug || "", 
+          phone: data.phone || "", 
+          address: data.address || "",
+          primaryColor: data.primary_color || "#18181b", 
+          secondaryColor: data.secondary_color || "#dc2626",
+          opensAt: data.opens_at || "08:00", 
+          closesAt: data.closes_at || "22:00",
           paymentMethods: Array.isArray(data.payment_methods) ? data.payment_methods : []
         });
       }
@@ -76,7 +88,11 @@ export default function SettingsPage() {
       await supabase.storage.from('store-logos').upload(fileName, file);
       const { data } = supabase.storage.from('store-logos').getPublicUrl(fileName);
       setLogoUrl(data.publicUrl);
-    } catch (error) { console.error(error); } 
+      toast.success("Logo atualizada!");
+    } catch (error) { 
+        console.error(error);
+        toast.error("Erro ao subir imagem.");
+    } 
     finally { setUploading(false); }
   };
 
@@ -84,20 +100,34 @@ export default function SettingsPage() {
     if (!storeId) return;
     setSaving(true);
     try {
-      await supabase.from("stores").update({
-          name: formData.name, slug: formData.slug, phone: formData.phone, address: formData.address, logo_url: logoUrl,
-          primary_color: formData.primaryColor, secondary_color: formData.secondaryColor,
-          opens_at: formData.opensAt, closes_at: formData.closesAt, payment_methods: formData.paymentMethods
+      const { error } = await supabase.from("stores").update({
+          name: formData.name, 
+          slug: formData.slug, 
+          phone: formData.phone, 
+          address: formData.address, 
+          logo_url: logoUrl,
+          primary_color: formData.primaryColor, 
+          secondary_color: formData.secondaryColor,
+          opens_at: formData.opensAt, 
+          closes_at: formData.closesAt, 
+          payment_methods: formData.paymentMethods
         }).eq("id", storeId);
-      alert("Alterações salvas.");
-    } catch { alert("Erro ao salvar."); } 
+
+      if (error) throw error;
+      toast.success("Configurações salvas com sucesso!");
+    } catch { 
+        toast.error("Erro ao salvar alterações.");
+    } 
     finally { setSaving(false); }
   };
 
   const copyToClipboard = () => {
-    navigator.clipboard.writeText(`${baseUrl}/${formData.slug}`);
+    // Copia o link REAL (para funcionar no teste)
+    const fullLink = `${baseUrl}/${formData.slug}`;
+    navigator.clipboard.writeText(fullLink);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
+    toast.success("Link copiado! (Use este para testar)");
   };
 
   if (loading) return <div className="flex h-screen items-center justify-center bg-zinc-950"><Loader2 className="animate-spin text-zinc-600"/></div>;
@@ -106,15 +136,14 @@ export default function SettingsPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 p-6 md:p-12 pb-32">
       <div className="max-w-5xl mx-auto space-y-10">
         
-        {/* HEADER */}
         <div className="flex flex-col gap-2 border-b border-zinc-900 pb-6">
           <h1 className="text-2xl font-semibold tracking-tight">Configurações Gerais</h1>
-          <p className="text-zinc-500 text-sm">Gerencie a identidade visual e as regras de negócio da sua loja.</p>
+          <p className="text-zinc-500 text-sm">Gerencie a identidade visual e regras da sua loja.</p>
         </div>
 
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-
-          {/* COLUNA ESQUERDA - IDENTIDADE */}
+          
+          {/* COLUNA ESQUERDA - IDENTIDADE E LINK */}
           <div className="lg:col-span-1 space-y-6">
             <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-6 flex flex-col items-center text-center space-y-4">
               <div className="relative group w-32 h-32 rounded-full bg-zinc-900 border border-zinc-800 flex items-center justify-center overflow-hidden cursor-pointer hover:border-zinc-600 transition-all">
@@ -130,23 +159,40 @@ export default function SettingsPage() {
               </div>
             </div>
 
-            {/* Link Preview Card */}
+            {/* CARD DE LINK ATUALIZADO */}
             <div className="bg-zinc-900/50 border border-zinc-800/50 rounded-xl p-4 space-y-3">
               <label className="text-[10px] font-bold uppercase text-zinc-500 tracking-wider">Link da Loja</label>
-              <div className="flex items-center gap-2 bg-black/40 border border-zinc-800 rounded-lg p-2">
-                 <Globe size={14} className="text-zinc-600"/>
-                 <input value={formData.slug} onChange={e => setFormData({...formData, slug: generateSlug(e.target.value)})} className="bg-transparent text-xs text-zinc-300 w-full outline-none font-mono"/>
-                 <button onClick={copyToClipboard} className="text-zinc-500 hover:text-white transition-colors">
-                    {copied ? <Check size={14}/> : <Copy size={14}/>}
+              
+              <div className="flex items-center gap-2 bg-black/40 border border-zinc-800 rounded-lg p-2 transition-colors focus-within:border-zinc-600">
+                 <Globe size={14} className="text-zinc-600 shrink-0"/>
+                 
+                 {/* Container do Link Completo */}
+                 <div className="flex items-center w-full min-w-0">
+                    {/* AQUI ESTÁ O TRUQUE: Mostramos SYSTEM_DOMAIN visualmente */}
+                    <span className="text-zinc-600 text-xs font-mono hidden sm:block truncate select-none">
+                        {SYSTEM_DOMAIN}/
+                    </span>
+                    
+                    {/* Input do Slug - Editável */}
+                    <input 
+                        value={formData.slug} 
+                        onChange={e => setFormData({...formData, slug: generateSlug(e.target.value)})} 
+                        className="bg-transparent text-xs text-white w-full outline-none font-mono font-bold placeholder:text-zinc-700 ml-0.5"
+                        placeholder="nome-da-loja"
+                    />
+                 </div>
+
+                 <button onClick={copyToClipboard} className="text-zinc-500 hover:text-white transition-colors p-1" title="Copiar link real">
+                    {copied ? <Check size={14} className="text-emerald-500"/> : <Copy size={14}/>}
                  </button>
               </div>
+              <p className="text-[10px] text-zinc-500 leading-relaxed">
+                  Este link será: <span className="text-zinc-300">{baseUrl}/{formData.slug}</span> enquanto você estiver testando.
+              </p>
             </div>
           </div>
 
-          {/* COLUNA DIREITA - FORMULÁRIOS */}
           <div className="lg:col-span-2 space-y-8">
-            
-            {/* SEÇÃO 1: DADOS BÁSICOS */}
             <section className="space-y-4">
               <h2 className="text-sm font-medium text-white border-l-2 border-indigo-500 pl-3">Informações da Loja</h2>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -170,7 +216,6 @@ export default function SettingsPage() {
 
             <div className="h-px bg-zinc-900 w-full" />
 
-            {/* SEÇÃO 2: CUSTOMIZAÇÃO */}
             <section className="space-y-4">
               <h2 className="text-sm font-medium text-white border-l-2 border-purple-500 pl-3 flex items-center gap-2">
                 Personalização Visual <Palette size={14} className="text-zinc-500"/>
@@ -195,7 +240,6 @@ export default function SettingsPage() {
 
             <div className="h-px bg-zinc-900 w-full" />
 
-            {/* SEÇÃO 3: OPERAÇÃO E PAGAMENTOS */}
             <section className="space-y-4">
               <h2 className="text-sm font-medium text-white border-l-2 border-emerald-500 pl-3">Operação e Pagamentos</h2>
               
@@ -233,11 +277,9 @@ export default function SettingsPage() {
                 })}
               </div>
             </section>
-
           </div>
         </div>
 
-        {/* FOOTER BAR */}
         <div className="fixed bottom-0 left-0 right-0 p-4 bg-zinc-950/80 backdrop-blur-md border-t border-zinc-900 flex justify-end z-40">
            <div className="max-w-5xl w-full mx-auto flex justify-end">
             <button 

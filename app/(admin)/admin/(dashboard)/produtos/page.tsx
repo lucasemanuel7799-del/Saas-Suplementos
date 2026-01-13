@@ -4,18 +4,36 @@ import { useEffect, useState } from "react";
 import { createClient } from "@/lib/supabase-browser";
 import { 
   Plus, Search, Package, Edit, Trash2, 
-  ScanBarcode, Image as ImageIcon, 
-  PackagePlus, TrendingUp, Tag
+  ScanBarcode, PackagePlus, AlertTriangle, X, Loader2
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { toast } from "sonner";
 
+interface Product {
+  id: number;
+  name: string;
+  description?: string;
+  price: number;
+  cost_price: number;
+  stock: number;
+  category?: string;
+  image_url?: string;
+  barcode?: string;
+  volume?: string;
+  is_kit?: boolean;
+  store_id: string;
+}
+
 export default function ProductsPage() {
   const supabase = createClient();
-  const [products, setProducts] = useState<any[]>([]);
+  const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState("");
+
+  // ESTADO PARA O MODAL DE EXCLUSÃO
+  const [productToDelete, setProductToDelete] = useState<number | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   useEffect(() => {
     fetchProducts();
@@ -23,28 +41,40 @@ export default function ProductsPage() {
 
   async function fetchProducts() {
     const { data: { user } } = await supabase.auth.getUser();
-    const { data } = await supabase
+    
+    const { data, error } = await supabase
       .from("products")
       .select("*")
       .eq("store_id", user?.id)
       .order("created_at", { ascending: false });
 
+    if (error) {
+      console.error(error);
+      toast.error("Erro ao carregar produtos.");
+    }
+
     if (data) setProducts(data);
     setLoading(false);
   }
 
-  const handleDelete = async (id: number) => {
-    if (!confirm("Tem certeza que deseja excluir este item?")) return;
-    
-    // Otimista
-    setProducts(prev => prev.filter(p => p.id !== id));
-    
-    const { error } = await supabase.from("products").delete().eq("id", id);
-    if (error) {
-        toast.error("Erro ao excluir.");
-        fetchProducts(); // Reverte se der erro
-    } else {
-        toast.success("Item excluído.");
+  // Função que realmente apaga (chamada pelo Modal)
+  const confirmDelete = async () => {
+    if (!productToDelete) return;
+    setIsDeleting(true);
+
+    try {
+        const { error } = await supabase.from("products").delete().eq("id", productToDelete);
+        
+        if (error) throw error;
+
+        // Atualiza a lista localmente
+        setProducts(prev => prev.filter(p => p.id !== productToDelete));
+        toast.success("Produto excluído com sucesso.");
+        setProductToDelete(null); // Fecha o modal
+    } catch (error) {
+        toast.error("Erro ao excluir. Tente novamente.");
+    } finally {
+        setIsDeleting(false);
     }
   };
 
@@ -64,7 +94,6 @@ export default function ProductsPage() {
         </div>
         
         <div className="flex gap-3">
-            {/* Botão Novo Kit */}
             <Link 
                 href="/admin/produtos/novo-kit"
                 className="flex items-center gap-2 bg-zinc-800 hover:bg-zinc-700 text-white px-4 py-2.5 rounded-xl text-sm font-bold border border-zinc-700 transition-all active:scale-95"
@@ -72,10 +101,9 @@ export default function ProductsPage() {
                 <PackagePlus size={18} className="text-purple-400"/> Novo Kit
             </Link>
             
-            {/* Botão Novo Produto */}
             <Link 
                 href="/admin/produtos/novo"
-                className="flex items-center gap-2 bg-orange-600 hover:bg-orange-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-orange-900/20 transition-all active:scale-95"
+                className="flex items-center gap-2 bg-emerald-600 hover:bg-emerald-500 text-white px-4 py-2.5 rounded-xl text-sm font-bold shadow-lg shadow-emerald-900/20 transition-all active:scale-95"
             >
                 <Plus size={18} /> Novo Produto
             </Link>
@@ -86,11 +114,11 @@ export default function ProductsPage() {
       <div className="shrink-0 relative max-w-md">
          <Search className="absolute left-3 top-2.5 text-zinc-500" size={18} />
          <input 
-            type="text" 
-            value={searchTerm}
-            onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Buscar por nome ou código de barras..." 
-            className="w-full pl-10 pr-4 py-2.5 bg-zinc-900/50 border border-zinc-800 rounded-xl text-sm text-white focus:border-orange-500 outline-none transition-all"
+           type="text" 
+           value={searchTerm}
+           onChange={(e) => setSearchTerm(e.target.value)}
+           placeholder="Buscar por nome ou código de barras..." 
+           className="w-full pl-10 pr-4 py-2.5 bg-zinc-900/50 border border-zinc-800 rounded-xl text-sm text-white focus:border-emerald-500 outline-none transition-all placeholder:text-zinc-600"
          />
       </div>
 
@@ -98,7 +126,7 @@ export default function ProductsPage() {
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 overflow-hidden shadow-xl backdrop-blur-sm flex flex-col flex-1 min-h-0">
         <div className="overflow-auto max-h-[600px] scrollbar-thin scrollbar-thumb-zinc-700">
           <table className="w-full text-left text-sm">
-            <thead className="sticky top-0 z-10 bg-zinc-950 text-zinc-500 uppercase font-medium text-xs shadow-md">
+            <thead className="sticky top-0 z-10 bg-zinc-950 text-zinc-500 uppercase font-medium text-xs shadow-md border-b border-zinc-800">
               <tr>
                 <th className="px-6 py-4 font-bold">Item</th>
                 <th className="px-6 py-4 font-bold text-center">Categoria</th>
@@ -133,8 +161,6 @@ export default function ProductsPage() {
                                     <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-purple-500/20 text-purple-400 border border-purple-500/30">KIT</span>
                                 )}
                             </div>
-                            
-                            {/* Barcode e Detalhes */}
                             <div className="flex items-center gap-2 mt-0.5">
                                 {product.barcode && (
                                     <div className="flex items-center gap-1 text-[10px] text-zinc-500">
@@ -157,7 +183,7 @@ export default function ProductsPage() {
 
                     {/* COLUNA 3: ESTOQUE */}
                     <td className="px-6 py-4 text-center">
-                        <span className={`font-mono font-bold ${product.stock <= 5 ? 'text-red-500' : 'text-zinc-300'}`}>
+                        <span className={`font-mono font-bold px-2 py-1 rounded ${product.stock <= 5 ? 'bg-red-500/10 text-red-500 border border-red-500/20' : 'text-zinc-300'}`}>
                             {product.stock}
                         </span>
                     </td>
@@ -166,8 +192,8 @@ export default function ProductsPage() {
                     <td className="px-6 py-4 text-right">
                         <div className="flex flex-col items-end">
                             <span className="font-bold text-emerald-400">R$ {product.price.toFixed(2).replace('.', ',')}</span>
-                            {product.cost_price > 0 && (
-                                <span className="text-[10px] text-zinc-600">Custo: R$ {product.cost_price.toFixed(2)}</span>
+                            {(product.cost_price || 0) > 0 && (
+                                <span className="text-[10px] text-zinc-500">Custo: R$ {product.cost_price.toFixed(2).replace('.',',')}</span>
                             )}
                         </div>
                     </td>
@@ -175,11 +201,16 @@ export default function ProductsPage() {
                     {/* COLUNA 5: AÇÕES */}
                     <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            {/* Aqui você poderia colocar o Link para editar */}
-                            <button className="p-2 bg-zinc-900 hover:bg-zinc-800 text-zinc-400 hover:text-white rounded-lg transition-colors">
-                                <Edit size={16} />
-                            </button>
-                            <button onClick={() => handleDelete(product.id)} className="p-2 bg-zinc-900 hover:bg-red-500/10 text-zinc-400 hover:text-red-500 rounded-lg transition-colors">
+                            <Link href={`/admin/produtos/editar/${product.id}`}>
+                                <button className="p-2 bg-zinc-900 hover:bg-blue-600/10 text-zinc-400 hover:text-blue-500 rounded-lg transition-colors border border-transparent hover:border-blue-500/20">
+                                    <Edit size={16} />
+                                </button>
+                            </Link>
+                            {/* BOTÃO QUE ABRE O MODAL */}
+                            <button 
+                                onClick={() => setProductToDelete(product.id)} 
+                                className="p-2 bg-zinc-900 hover:bg-red-500/10 text-zinc-400 hover:text-red-500 rounded-lg transition-colors border border-transparent hover:border-red-500/20"
+                            >
                                 <Trash2 size={16} />
                             </button>
                         </div>
@@ -190,6 +221,46 @@ export default function ProductsPage() {
           </table>
         </div>
       </div>
+
+      {/* --- MODAL DE CONFIRMAÇÃO (CUSTOMIZADO) --- */}
+      {productToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+            <div className="w-full max-w-sm bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl p-6 transform transition-all scale-100 animate-in zoom-in-95">
+                
+                <div className="flex flex-col items-center text-center gap-4">
+                    <div className="h-12 w-12 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 mb-2">
+                        <AlertTriangle size={24} />
+                    </div>
+                    
+                    <div className="space-y-1">
+                        <h3 className="text-lg font-bold text-white">Excluir Produto?</h3>
+                        <p className="text-sm text-zinc-400">
+                            Esta ação é irreversível. O produto será removido do estoque e das listagens.
+                        </p>
+                    </div>
+
+                    <div className="flex gap-3 w-full mt-4">
+                        <button 
+                            onClick={() => setProductToDelete(null)}
+                            disabled={isDeleting}
+                            className="flex-1 px-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-bold rounded-xl transition-colors disabled:opacity-50"
+                        >
+                            Cancelar
+                        </button>
+                        <button 
+                            onClick={confirmDelete}
+                            disabled={isDeleting}
+                            className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                        >
+                            {isDeleting ? <Loader2 className="animate-spin" size={16}/> : "Sim, Excluir"}
+                        </button>
+                    </div>
+                </div>
+
+            </div>
+        </div>
+      )}
+
     </div>
   );
 }
