@@ -2,6 +2,90 @@
 @tailwind components;
 @tailwind utilities;
 
+@layer base {
+  :root {
+    /* Cores de Fundo e Texto (Mantendo HSL padrão do Shadcn para compatibilidade) */
+    --background: 0 0% 100%;
+    --foreground: 240 10% 3.9%;
+
+    /* Cards e Popovers */
+    --card: 0 0% 100%;
+    --card-foreground: 240 10% 3.9%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 240 10% 3.9%;
+
+    /* --- CORES PRINCIPAIS (MODIFICADO PARA HEX) --- */
+    /* Isso garante que funcione com o seletor de cores do Admin e o Layout da Loja */
+    --primary: #18181b; 
+    --primary-foreground: #fafafa;
+
+    --secondary: #f4f4f5;
+    --secondary-foreground: #18181b;
+    /* --------------------------------------------- */
+
+    /* Outras Cores Utilitárias (Muted, Accent, Destructive) */
+    --muted: 240 4.8% 95.9%;
+    --muted-foreground: 240 3.8% 46.1%;
+    
+    --accent: 240 4.8% 95.9%;
+    --accent-foreground: 240 5.9% 10%;
+    
+    --destructive: 0 84.2% 60.2%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 5.9% 90%;
+    --input: 240 5.9% 90%;
+    --ring: 240 10% 3.9%;
+
+    /* --- ARREDONDAMENTO (Global) --- */
+    /* 0.5rem = 8px (Padrão moderno/sério) */
+    /* Se quiser ainda mais quadrado, mude para 0.3rem */
+    --radius: 0.5rem;
+  }
+
+  .dark {
+    --background: 240 10% 3.9%;
+    --foreground: 0 0% 98%;
+
+    --card: 240 10% 3.9%;
+    --card-foreground: 0 0% 98%;
+
+    --popover: 240 10% 3.9%;
+    --popover-foreground: 0 0% 98%;
+
+    /* Cores Dark Mode em HEX */
+    --primary: #fafafa;
+    --primary-foreground: #18181b;
+
+    --secondary: #27272a;
+    --secondary-foreground: #fafafa;
+
+    --muted: 240 3.7% 15.9%;
+    --muted-foreground: 240 5% 64.9%;
+
+    --accent: 240 3.7% 15.9%;
+    --accent-foreground: 0 0% 98%;
+
+    --destructive: 0 62.8% 30.6%;
+    --destructive-foreground: 0 0% 98%;
+
+    --border: 240 3.7% 15.9%;
+    --input: 240 3.7% 15.9%;
+    --ring: 240 4.9% 83.9%;
+  }
+}
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
+}
+
+/* Utilitários Personalizados */
+
 /* Esconde a barra de rolagem mas permite rolar */
 .scrollbar-hide::-webkit-scrollbar {
     display: none;

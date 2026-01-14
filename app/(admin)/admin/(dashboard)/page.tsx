@@ -5,7 +5,7 @@ import { createClient } from "@/lib/supabase-browser";
 import { 
   DollarSign, ShoppingBag, Package, Wallet, 
   TrendingUp, TrendingDown, Calendar, AlertCircle, CheckCircle2, Clock,
-  ArrowUpRight, ArrowDownRight, ExternalLink, ArrowRight // <--- ADICIONEI AQUI
+  ArrowUpRight, ArrowDownRight, ExternalLink, ArrowRight 
 } from "lucide-react";
 import { 
   AreaChart, Area, XAxis, YAxis, Tooltip as RechartsTooltip, ResponsiveContainer, 
@@ -35,7 +35,6 @@ export default function DashboardPage() {
     paidOrders: 0
   });
 
-  // Calcula datas
   const getDates = () => {
     const now = new Date();
     const start = new Date(now);
@@ -70,21 +69,33 @@ export default function DashboardPage() {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) return;
 
+      // --- PASSO CRUCIAL: PEGAR O ID DA LOJA ---
+      const { data: store } = await supabase
+        .from("stores")
+        .select("id")
+        .eq("owner_id", user.id)
+        .maybeSingle();
+
+      if (!store) {
+        setLoading(false);
+        return;
+      }
+
       const { start, prevStart } = getDates();
 
-      // --- 1. BUSCA PEDIDOS ATUAIS ---
+      // --- 1. BUSCA PEDIDOS ATUAIS DA LOJA ---
       const { data: orders } = await supabase
         .from("orders")
         .select("*")
-        .eq("store_id", user.id)
+        .eq("store_id", store.id) // CORRIGIDO
         .gte("created_at", start.toISOString())
         .order("created_at", { ascending: false });
 
-      // --- 2. BUSCA PEDIDOS ANTERIORES ---
+      // --- 2. BUSCA PEDIDOS ANTERIORES DA LOJA ---
       const { data: prevOrders } = await supabase
         .from("orders")
         .select("total_amount")
-        .eq("store_id", user.id)
+        .eq("store_id", store.id) // CORRIGIDO
         .gte("created_at", prevStart.toISOString())
         .lt("created_at", start.toISOString());
 
@@ -110,7 +121,7 @@ export default function DashboardPage() {
       const { data: transactions } = await supabase
         .from("transactions")
         .select("*")
-        .eq("store_id", user.id)
+        .eq("store_id", store.id) // CORRIGIDO
         .eq("type", "income")
         .gte("due_date", start.toISOString());
 
@@ -129,11 +140,10 @@ export default function DashboardPage() {
         let chartArray = Object.entries(chartMap).map(([date, value]) => ({ date, value }));
         
         if (timeRange !== 'today') {
-            chartArray = chartArray.reverse();
             chartArray.sort((a: any, b: any) => {
                 const [d1, m1] = a.date.split('/');
                 const [d2, m2] = b.date.split('/');
-                return new Date(2024, m1-1, d1).getTime() - new Date(2024, m2-1, d2).getTime();
+                return new Date(2026, m1-1, d1).getTime() - new Date(2026, m2-1, d2).getTime();
             });
         }
         setSalesData(chartArray);
@@ -164,7 +174,7 @@ export default function DashboardPage() {
 
             const topArray = Object.entries(productMap)
                 .map(([name, value]) => ({ name, value }))
-                .sort((a: any, b: any) => b.value - a.value)
+                .sort((a: any, b: any) => (b.value as number) - (a.value as number))
                 .slice(0, 5);
             setTopProducts(topArray);
           }
@@ -174,7 +184,7 @@ export default function DashboardPage() {
       }
 
       // --- 5. ESTOQUE BAIXO ---
-      const { data: prodStock } = await supabase.from("products").select("stock").eq("store_id", user.id);
+      const { data: prodStock } = await supabase.from("products").select("stock").eq("store_id", store.id); // CORRIGIDO
       if(prodStock) {
         setKpi(prev => ({ ...prev, lowStock: prodStock.filter(p => p.stock <= 5).length }));
       }
@@ -218,12 +228,9 @@ export default function DashboardPage() {
             </div>
         </div>
 
-        {/* KPI CARDS - LINHA 1 */}
+        {/* KPI CARDS */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 shrink-0">
-            
-            {/* 1. FATURAMENTO */}
             <div className="p-5 rounded-2xl border border-zinc-800 bg-zinc-900/50 flex flex-col justify-between h-32 relative overflow-hidden group">
-                <div className="absolute right-0 top-0 p-32 bg-emerald-500/5 rounded-full blur-3xl group-hover:bg-emerald-500/10 transition-all"/>
                 <div className="flex justify-between items-start z-10">
                     <div>
                         <p className="text-zinc-400 text-xs font-bold uppercase tracking-wider">Faturamento</p>
@@ -231,17 +238,14 @@ export default function DashboardPage() {
                     </div>
                     <div className="p-2 bg-emerald-500/10 text-emerald-500 rounded-lg"><DollarSign size={20}/></div>
                 </div>
-                
                 <div className={`flex items-center gap-1 text-xs z-10 font-medium ${growth >= 0 ? 'text-emerald-500' : 'text-red-500'}`}>
                     {growth >= 0 ? <TrendingUp size={12}/> : <TrendingDown size={12}/>} 
                     {loading ? "..." : `${Math.abs(growth).toFixed(1)}%`}
-                    <span className="text-zinc-500 font-normal ml-1">vs período anterior</span>
+                    <span className="text-zinc-500 font-normal ml-1">vs anterior</span>
                 </div>
             </div>
 
-            {/* 2. LUCRO ESTIMADO */}
             <div className="p-5 rounded-2xl border border-zinc-800 bg-zinc-900/50 flex flex-col justify-between h-32 relative overflow-hidden group">
-                <div className="absolute right-0 top-0 p-32 bg-blue-500/5 rounded-full blur-3xl group-hover:bg-blue-500/10 transition-all"/>
                 <div className="flex justify-between items-start z-10">
                     <div>
                         <p className="text-zinc-400 text-xs font-bold uppercase tracking-wider">Lucro Estimado</p>
@@ -254,30 +258,24 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* 3. VENDAS */}
-            <div onClick={() => router.push('/admin/pedidos')} className="cursor-pointer p-5 rounded-2xl border border-zinc-800 bg-zinc-900/50 flex flex-col justify-between h-32 relative overflow-hidden hover:border-zinc-700 transition-colors">
+            <div onClick={() => router.push('/admin/pedidos')} className="cursor-pointer p-5 rounded-2xl border border-zinc-800 bg-zinc-900/50 flex flex-col justify-between h-32 hover:border-zinc-700 transition-colors">
                 <div className="flex justify-between items-start z-10">
                     <div>
-                        <p className="text-zinc-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">
-                            Total de Vendas <ExternalLink size={10}/>
-                        </p>
+                        <p className="text-zinc-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">Vendas <ExternalLink size={10}/></p>
                         <h3 className="text-2xl font-bold text-white mt-1">{loading ? "..." : kpi.ordersCount}</h3>
                     </div>
                     <div className="p-2 bg-purple-500/10 text-purple-500 rounded-lg"><ShoppingBag size={20}/></div>
                 </div>
                 <div className="flex gap-3 text-xs z-10 mt-1">
-                    <span className="flex items-center gap-1 text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded"><CheckCircle2 size={10}/> {kpi.paidOrders} Pagos</span>
-                    <span className="flex items-center gap-1 text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded"><Clock size={10}/> {kpi.pendingOrders} Pend</span>
+                    <span className="flex items-center gap-1 text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded">{kpi.paidOrders} Pagos</span>
+                    <span className="flex items-center gap-1 text-orange-400 bg-orange-500/10 px-1.5 py-0.5 rounded">{kpi.pendingOrders} Pen</span>
                 </div>
             </div>
 
-            {/* 4. ESTOQUE BAIXO */}
-            <div onClick={() => router.push('/admin/produtos')} className="cursor-pointer p-5 rounded-2xl border border-zinc-800 bg-zinc-900/50 flex flex-col justify-between h-32 relative overflow-hidden hover:border-zinc-700 transition-colors">
+            <div onClick={() => router.push('/admin/produtos')} className="cursor-pointer p-5 rounded-2xl border border-zinc-800 bg-zinc-900/50 flex flex-col justify-between h-32 hover:border-zinc-700 transition-colors">
                 <div className="flex justify-between items-start z-10">
                     <div>
-                        <p className="text-zinc-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">
-                            Estoque Baixo <ExternalLink size={10}/>
-                        </p>
+                        <p className="text-zinc-400 text-xs font-bold uppercase tracking-wider flex items-center gap-1">Estoque Baixo <ExternalLink size={10}/></p>
                         <h3 className={`text-2xl font-bold mt-1 ${kpi.lowStock > 0 ? 'text-orange-500' : 'text-white'}`}>
                             {loading ? "..." : kpi.lowStock}
                         </h3>
@@ -286,33 +284,29 @@ export default function DashboardPage() {
                         <AlertCircle size={20}/>
                     </div>
                 </div>
-                <div className="text-xs text-zinc-500 z-10">Produtos abaixo do mínimo (5 un)</div>
+                <div className="text-xs text-zinc-500 z-10">Abaixo de 5 unidades</div>
             </div>
         </div>
 
-        {/* --- LINHA 2: GRIDS PRINCIPAIS --- */}
+        {/* GRAFICOS E LISTAS */}
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-6">
-            
-            {/* ESQUERDA: LISTA PEDIDOS */}
             <div className="xl:col-span-3 bg-zinc-900/30 border border-zinc-800 rounded-2xl flex flex-col overflow-hidden h-[320px]">
-                <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50 shrink-0">
+                <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900/50">
                     <h3 className="text-sm font-bold text-zinc-200">Pedidos Recentes</h3>
                     <Link href="/admin/pedidos" className="text-xs text-emerald-500 hover:underline">Ver tudo</Link>
                 </div>
                 <div className="flex-1 overflow-y-auto p-2 space-y-2 scrollbar-thin scrollbar-thumb-zinc-800">
                     {loading ? (
-                         <div className="h-full flex items-center justify-center text-zinc-600 text-xs">Carregando...</div>
+                         <div className="h-full flex items-center justify-center text-zinc-600 text-xs font-bold animate-pulse">Carregando...</div>
                     ) : recentOrders.length === 0 ? (
-                        <div className="h-full flex items-center justify-center text-zinc-600 text-xs">Sem vendas.</div>
+                        <div className="h-full flex items-center justify-center text-zinc-600 text-xs italic">Sem vendas no período.</div>
                     ) : (
                         recentOrders.map((order) => (
-                            <div key={order.id} className="p-2.5 bg-zinc-900/50 border border-zinc-800/50 rounded-xl hover:border-zinc-700 transition-colors flex items-center justify-between cursor-pointer group">
+                            <div key={order.id} className="p-2.5 bg-zinc-900/50 border border-zinc-800/50 rounded-xl flex items-center justify-between group">
                                 <div>
                                     <div className="flex items-center gap-2">
                                         <span className="text-xs font-bold text-white">#{order.id.toString().slice(0,4)}</span>
-                                        <span className={`text-[9px] px-1 py-0.5 rounded font-bold uppercase ${
-                                            order.status === 'paid' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-orange-500/20 text-orange-500'
-                                        }`}>
+                                        <span className={`text-[9px] px-1 py-0.5 rounded font-bold uppercase ${order.status === 'paid' ? 'bg-emerald-500/20 text-emerald-500' : 'bg-orange-500/20 text-orange-500'}`}>
                                             {order.status === 'paid' ? 'Pago' : 'Pen'}
                                         </span>
                                     </div>
@@ -320,7 +314,7 @@ export default function DashboardPage() {
                                 </div>
                                 <div className="text-right">
                                     <p className="text-xs font-bold text-emerald-400">R$ {Number(order.total_amount || 0).toFixed(2)}</p>
-                                    <ArrowRight size={12} className="ml-auto text-zinc-600 group-hover:text-white mt-0.5 transition-colors"/>
+                                    <ArrowRight size={12} className="ml-auto text-zinc-600 group-hover:text-white transition-colors"/>
                                 </div>
                             </div>
                         ))
@@ -328,14 +322,13 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* MEIO: GRÁFICO */}
             <div className="xl:col-span-6 bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5 h-[320px] flex flex-col">
-                <h3 className="text-sm font-bold text-zinc-200 mb-4 flex items-center gap-2 shrink-0">
+                <h3 className="text-sm font-bold text-zinc-200 mb-4 flex items-center gap-2">
                     <TrendingUp size={16} className="text-emerald-500"/> Performance Financeira
                 </h3>
                 <div className="flex-1 w-full min-h-0">
                     {salesData.length === 0 && !loading ? (
-                        <div className="h-full flex items-center justify-center text-zinc-600 text-xs">Sem dados.</div>
+                        <div className="h-full flex items-center justify-center text-zinc-600 text-xs">Sem transações para exibir.</div>
                     ) : (
                         <ResponsiveContainer width="100%" height="100%">
                             <AreaChart data={salesData}>
@@ -349,7 +342,6 @@ export default function DashboardPage() {
                                 <YAxis stroke="#52525b" fontSize={10} tickLine={false} axisLine={false} tickFormatter={(val) => `R$${val}`} />
                                 <RechartsTooltip 
                                     contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '8px', color: '#fff', fontSize: '12px' }}
-                                    itemStyle={{ color: '#10b981' }}
                                 />
                                 <Area type="monotone" dataKey="value" stroke="#10b981" strokeWidth={2} fillOpacity={1} fill="url(#colorSales)" />
                             </AreaChart>
@@ -358,43 +350,33 @@ export default function DashboardPage() {
                 </div>
             </div>
 
-            {/* DIREITA: TOP PRODUTOS */}
             <div className="xl:col-span-3 bg-zinc-900/30 border border-zinc-800 rounded-2xl p-5 h-[320px] flex flex-col">
-                <h3 className="text-sm font-bold text-zinc-200 mb-2 flex items-center gap-2 shrink-0">
+                <h3 className="text-sm font-bold text-zinc-200 mb-2 flex items-center gap-2">
                     <Package size={16} className="text-orange-500"/> Top Produtos
                 </h3>
-                <div className="flex-1 w-full min-h-0 relative">
+                <div className="flex-1 w-full min-h-0">
                     {topProducts.length === 0 && !loading ? (
-                        <div className="flex h-full items-center justify-center text-zinc-500 text-xs">Sem vendas.</div>
+                        <div className="flex h-full items-center justify-center text-zinc-500 text-xs">Aguardando vendas...</div>
                     ) : (
                         <ResponsiveContainer width="100%" height="100%">
                             <PieChart>
-                                <Pie
-                                    data={topProducts}
-                                    cx="50%"
-                                    cy="40%" 
-                                    innerRadius={45} 
-                                    outerRadius={65} 
-                                    paddingAngle={5}
-                                    dataKey="value"
-                                >
+                                <Pie data={topProducts} cx="50%" cy="40%" innerRadius={45} outerRadius={65} paddingAngle={5} dataKey="value">
                                     {topProducts.map((entry, index) => (
                                         <Cell key={`cell-${index}`} fill={PIE_COLORS[index % PIE_COLORS.length]} stroke="rgba(0,0,0,0)" />
                                     ))}
                                 </Pie>
-                                <RechartsTooltip contentStyle={{ backgroundColor: '#18181b', borderColor: '#27272a', borderRadius: '8px', fontSize: '12px' }} itemStyle={{ color: '#fff' }} />
+                                <RechartsTooltip />
                                 <Legend 
                                     verticalAlign="bottom" 
                                     height={100} 
-                                    iconSize={8}
                                     content={(props) => {
                                         const { payload } = props;
                                         return (
-                                            <ul className="flex flex-col gap-1.5 mt-2 overflow-y-auto max-h-[100px] scrollbar-thin scrollbar-thumb-zinc-800 pr-1">
+                                            <ul className="flex flex-col gap-1.5 mt-2 overflow-y-auto max-h-[100px] scrollbar-hide">
                                                 {payload?.map((entry: any, index: number) => (
                                                     <li key={`item-${index}`} className="flex items-center justify-between text-[10px] text-zinc-400">
                                                         <div className="flex items-center gap-2">
-                                                            <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+                                                            <div className="w-2 h-2 rounded-full" style={{ backgroundColor: entry.color }} />
                                                             <span className="truncate max-w-[90px]">{entry.value}</span>
                                                         </div>
                                                         <span className="font-bold text-white">{(topProducts[index]?.value || 0)}</span>
@@ -409,7 +391,6 @@ export default function DashboardPage() {
                     )}
                 </div>
             </div>
-
         </div>
     </div>
   );

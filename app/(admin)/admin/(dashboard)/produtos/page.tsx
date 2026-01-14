@@ -40,24 +40,37 @@ export default function ProductsPage() {
   }, []);
 
   async function fetchProducts() {
+    setLoading(true);
     const { data: { user } } = await supabase.auth.getUser();
     
-    const { data, error } = await supabase
-      .from("products")
-      .select("*")
-      .eq("store_id", user?.id)
-      .order("created_at", { ascending: false });
+    if (!user) return;
 
-    if (error) {
-      console.error(error);
-      toast.error("Erro ao carregar produtos.");
+    // 1. PRIMEIRO: Busca o ID da loja vinculada ao dono
+    const { data: store } = await supabase
+      .from("stores")
+      .select("id")
+      .eq("owner_id", user.id)
+      .maybeSingle();
+
+    if (store) {
+      // 2. SEGUNDO: Busca os produtos usando o store.id (UUID)
+      const { data, error } = await supabase
+        .from("products")
+        .select("*")
+        .eq("store_id", store.id) // CORREÇÃO: Usando store.id em vez de user.id
+        .order("created_at", { ascending: false });
+
+      if (error) {
+        console.error(error);
+        toast.error("Erro ao carregar produtos.");
+      }
+
+      if (data) setProducts(data);
     }
-
-    if (data) setProducts(data);
+    
     setLoading(false);
   }
 
-  // Função que realmente apaga (chamada pelo Modal)
   const confirmDelete = async () => {
     if (!productToDelete) return;
     setIsDeleting(true);
@@ -67,10 +80,9 @@ export default function ProductsPage() {
         
         if (error) throw error;
 
-        // Atualiza a lista localmente
         setProducts(prev => prev.filter(p => p.id !== productToDelete));
         toast.success("Produto excluído com sucesso.");
-        setProductToDelete(null); // Fecha o modal
+        setProductToDelete(null);
     } catch (error) {
         toast.error("Erro ao excluir. Tente novamente.");
     } finally {
@@ -124,7 +136,7 @@ export default function ProductsPage() {
 
       {/* TABELA */}
       <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 overflow-hidden shadow-xl backdrop-blur-sm flex flex-col flex-1 min-h-0">
-        <div className="overflow-auto max-h-[600px] scrollbar-thin scrollbar-thumb-zinc-700">
+        <div className="overflow-auto scrollbar-thin scrollbar-thumb-zinc-700">
           <table className="w-full text-left text-sm">
             <thead className="sticky top-0 z-10 bg-zinc-950 text-zinc-500 uppercase font-medium text-xs shadow-md border-b border-zinc-800">
               <tr>
@@ -137,14 +149,12 @@ export default function ProductsPage() {
             </thead>
             <tbody className="divide-y divide-zinc-800/50">
               {loading ? (
-                  <tr><td colSpan={5} className="text-center py-20 text-zinc-500">Carregando catálogo...</td></tr>
+                  <tr><td colSpan={5} className="text-center py-20 text-zinc-500"><Loader2 className="animate-spin mx-auto mb-2"/> Carregando catálogo...</td></tr>
               ) : filteredProducts.length === 0 ? (
                   <tr><td colSpan={5} className="text-center py-20 text-zinc-500">Nenhum item encontrado.</td></tr>
               ) : (
                filteredProducts.map((product) => (
                   <tr key={product.id} className="hover:bg-zinc-800/30 group transition-colors">
-                    
-                    {/* COLUNA 1: NOME + IMAGEM + BARCODE */}
                     <td className="px-6 py-4">
                         <div className="flex items-center gap-4">
                           <div className="h-12 w-12 rounded-lg bg-zinc-800 border border-zinc-700 flex items-center justify-center overflow-hidden shrink-0 relative">
@@ -173,22 +183,16 @@ export default function ProductsPage() {
                           </div>
                         </div>
                     </td>
-
-                    {/* COLUNA 2: CATEGORIA */}
                     <td className="px-6 py-4 text-center">
                         <span className="inline-block px-2 py-1 rounded bg-zinc-900 border border-zinc-800 text-zinc-400 text-xs truncate max-w-[120px]">
                             {product.category || "-"}
                         </span>
                     </td>
-
-                    {/* COLUNA 3: ESTOQUE */}
                     <td className="px-6 py-4 text-center">
                         <span className={`font-mono font-bold px-2 py-1 rounded ${product.stock <= 5 ? 'bg-red-500/10 text-red-500 border border-red-500/20' : 'text-zinc-300'}`}>
                             {product.stock}
                         </span>
                     </td>
-
-                    {/* COLUNA 4: PREÇOS */}
                     <td className="px-6 py-4 text-right">
                         <div className="flex flex-col items-end">
                             <span className="font-bold text-emerald-400">R$ {product.price.toFixed(2).replace('.', ',')}</span>
@@ -197,8 +201,6 @@ export default function ProductsPage() {
                             )}
                         </div>
                     </td>
-
-                    {/* COLUNA 5: AÇÕES */}
                     <td className="px-6 py-4 text-right">
                         <div className="flex items-center justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                             <Link href={`/admin/produtos/editar/${product.id}`}>
@@ -206,7 +208,6 @@ export default function ProductsPage() {
                                     <Edit size={16} />
                                 </button>
                             </Link>
-                            {/* BOTÃO QUE ABRE O MODAL */}
                             <button 
                                 onClick={() => setProductToDelete(product.id)} 
                                 className="p-2 bg-zinc-900 hover:bg-red-500/10 text-zinc-400 hover:text-red-500 rounded-lg transition-colors border border-transparent hover:border-red-500/20"
@@ -222,45 +223,28 @@ export default function ProductsPage() {
         </div>
       </div>
 
-      {/* --- MODAL DE CONFIRMAÇÃO (CUSTOMIZADO) --- */}
+      {/* MODAL DE CONFIRMAÇÃO */}
       {productToDelete && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-            <div className="w-full max-w-sm bg-zinc-950 border border-zinc-800 rounded-2xl shadow-2xl p-6 transform transition-all scale-100 animate-in zoom-in-95">
-                
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4">
+            <div className="w-full max-w-sm bg-zinc-950 border border-zinc-800 rounded-2xl p-6">
                 <div className="flex flex-col items-center text-center gap-4">
                     <div className="h-12 w-12 rounded-full bg-red-500/10 flex items-center justify-center text-red-500 mb-2">
                         <AlertTriangle size={24} />
                     </div>
-                    
                     <div className="space-y-1">
                         <h3 className="text-lg font-bold text-white">Excluir Produto?</h3>
-                        <p className="text-sm text-zinc-400">
-                            Esta ação é irreversível. O produto será removido do estoque e das listagens.
-                        </p>
+                        <p className="text-sm text-zinc-400">Esta ação é irreversível.</p>
                     </div>
-
                     <div className="flex gap-3 w-full mt-4">
-                        <button 
-                            onClick={() => setProductToDelete(null)}
-                            disabled={isDeleting}
-                            className="flex-1 px-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 font-bold rounded-xl transition-colors disabled:opacity-50"
-                        >
-                            Cancelar
-                        </button>
-                        <button 
-                            onClick={confirmDelete}
-                            disabled={isDeleting}
-                            className="flex-1 px-4 py-2.5 bg-red-600 hover:bg-red-500 text-white font-bold rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                        >
-                            {isDeleting ? <Loader2 className="animate-spin" size={16}/> : "Sim, Excluir"}
+                        <button onClick={() => setProductToDelete(null)} disabled={isDeleting} className="flex-1 px-4 py-2.5 bg-zinc-900 text-zinc-300 font-bold rounded-xl transition-colors">Cancelar</button>
+                        <button onClick={confirmDelete} disabled={isDeleting} className="flex-1 px-4 py-2.5 bg-red-600 text-white font-bold rounded-xl flex items-center justify-center gap-2">
+                            {isDeleting ? <Loader2 className="animate-spin" size={16}/> : "Excluir"}
                         </button>
                     </div>
                 </div>
-
             </div>
         </div>
       )}
-
     </div>
   );
 }

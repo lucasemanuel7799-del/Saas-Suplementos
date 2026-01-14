@@ -1,111 +1,92 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import React, { createContext, useContext, useState, useEffect } from "react";
 
-// 1. Definição do Tipo do Item
 export interface CartItem {
-  id: number;
+  id: string;
   name: string;
   price: number;
-  image_url?: string;
+  image_url?: string | null;
   quantity: number;
-  flavor?: string;
-  volume?: string;
+  category?: string;
 }
 
-// 2. Definição do Contexto (Aqui que estava faltando o updateQuantity em algumas versões)
 interface CartContextType {
   items: CartItem[];
-  addToCart: (product: any, quantity?: number, flavor?: string, volume?: string) => void;
-  removeItem: (productId: number) => void;
-  updateQuantity: (productId: number, quantity: number) => void; // <--- ESSA LINHA RESOLVE O ERRO
-  getItemQuantity: (productId: number) => number; // Nova função útil pro card
+  addToCart: (product: any) => void;
+  removeFromCart: (productId: string) => void;
+  updateQuantity: (productId: string, quantity: number) => void;
   clearCart: () => void;
   totalItems: number;
-  total: number;
+  totalPrice: number;
 }
 
 const CartContext = createContext<CartContextType | undefined>(undefined);
 
-export function CartProvider({ children }: { children: ReactNode }) {
+export function CartProvider({ children }: { children: React.ReactNode }) {
   const [items, setItems] = useState<CartItem[]>([]);
+  const [isMounted, setIsMounted] = useState(false);
 
-  // Carregar do LocalStorage
+  // 1. Evita erro de hidratação carregando apenas no cliente
   useEffect(() => {
-    const savedCart = localStorage.getItem("@loja:cart");
+    setIsMounted(true);
+    const savedCart = localStorage.getItem("cart");
     if (savedCart) {
-      try { setItems(JSON.parse(savedCart)); } catch (e) { console.error(e); }
+      try {
+        setItems(JSON.parse(savedCart));
+      } catch (e) {
+        console.error("Erro ao carregar carrinho", e);
+      }
     }
   }, []);
 
-  // Salvar no LocalStorage
+  // 2. Salva no localStorage
   useEffect(() => {
-    localStorage.setItem("@loja:cart", JSON.stringify(items));
-  }, [items]);
+    if (isMounted) {
+      localStorage.setItem("cart", JSON.stringify(items));
+    }
+  }, [items, isMounted]);
 
-  // Adicionar
-  function addToCart(product: any, quantity = 1, flavor?: string, volume?: string) {
+  const addToCart = (product: any) => {
     setItems((prev) => {
-      const existingIndex = prev.findIndex((item) => item.id === product.id);
-      
-      if (existingIndex >= 0) {
-        const newItems = [...prev];
-        newItems[existingIndex].quantity += quantity;
-        return newItems;
-      } else {
-        return [...prev, {
-          id: product.id,
-          name: product.name,
-          price: Number(product.price),
-          image_url: product.image_url,
-          quantity: quantity,
-          flavor: flavor || product.flavor,
-          volume: volume || product.volume
-        }];
+      const existing = prev.find((item) => item.id === product.id);
+      if (existing) {
+        return prev.map((item) =>
+          item.id === product.id ? { ...item, quantity: item.quantity + 1 } : item
+        );
       }
+      return [...prev, { ...product, quantity: 1 }];
     });
-  }
+  };
 
-  // Remover
-  function removeItem(productId: number) {
+  const removeFromCart = (productId: string) => {
     setItems((prev) => prev.filter((item) => item.id !== productId));
-  }
+  };
 
-  // Atualizar Quantidade
-  function updateQuantity(productId: number, quantity: number) {
-    if (quantity < 1) {
-      removeItem(productId);
+  const updateQuantity = (productId: string, quantity: number) => {
+    if (quantity <= 0) {
+      removeFromCart(productId);
       return;
     }
     setItems((prev) =>
       prev.map((item) => (item.id === productId ? { ...item, quantity } : item))
     );
-  }
+  };
 
-  // Pegar quantidade de um item específico (Útil para o Card saber quantos tem)
-  function getItemQuantity(productId: number) {
-    const item = items.find((i) => i.id === productId);
-    return item ? item.quantity : 0;
-  }
+  const clearCart = () => setItems([]);
 
-  function clearCart() {
-    setItems([]);
-  }
+  const totalItems = items.reduce((sum, item) => sum + (item.quantity || 0), 0);
+  const totalPrice = items.reduce((sum, item) => sum + (Number(item.price) * (item.quantity || 0)), 0);
 
-  const totalItems = items.reduce((acc, item) => acc + item.quantity, 0);
-  const total = items.reduce((acc, item) => acc + (item.price * item.quantity), 0);
+  // Se não estiver montado, não renderiza o Provider ainda (previne erro de UI)
+  if (!isMounted) {
+    return <>{children}</>;
+  }
 
   return (
-    <CartContext.Provider
-      value={{
-        items,
-        addToCart,
-        removeItem,
-        updateQuantity,
-        getItemQuantity,
-        clearCart,
-        totalItems,
-        total,
+    <CartContext.Provider 
+      value={{ 
+        items, addToCart, removeFromCart, updateQuantity, clearCart, totalItems, totalPrice 
       }}
     >
       {children}
@@ -113,10 +94,10 @@ export function CartProvider({ children }: { children: ReactNode }) {
   );
 }
 
-export function useCart() {
+export const useCart = () => {
   const context = useContext(CartContext);
   if (!context) {
-    throw new Error("useCart must be used within a CartProvider");
+    throw new Error("useCart deve ser usado dentro de um CartProvider");
   }
   return context;
-}
+};

@@ -12,14 +12,13 @@ import {
   LogOut, 
   Store,
   Building2,
-  ClipboardList, // Stock
-  TicketPercent, // Promoções
-  Calculator,    // PDV
-  CircleDollarSign // Financeiro (Novo)
+  ClipboardList, 
+  TicketPercent, 
+  Calculator,    
+  CircleDollarSign 
 } from "lucide-react";
 import { createClient } from "@/lib/supabase-browser";
 
-// Lista Completa de Itens do Menu
 const menuItems = [
   { name: "Visão Geral", icon: LayoutDashboard, path: "/admin" },
   { name: "Pedidos", icon: ShoppingBag, path: "/admin/pedidos" },
@@ -27,7 +26,7 @@ const menuItems = [
   { name: "Produtos", icon: Package, path: "/admin/produtos" },
   { name: "Stock", icon: ClipboardList, path: "/admin/inventory" },
   { name: "Clientes", icon: Users, path: "/admin/clientes" },
-  { name: "Financeiro", icon: CircleDollarSign, path: "/admin/financeiro" }, // <--- Novo Link
+  { name: "Financeiro", icon: CircleDollarSign, path: "/admin/financeiro" },
   { name: "Promoções", icon: TicketPercent, path: "/admin/promocoes" },
   { name: "Configurações", icon: Settings, path: "/admin/settings" },
 ];
@@ -37,55 +36,49 @@ export default function AdminSidebar() {
   const router = useRouter();
   const supabase = createClient();
   
-  // Estados
   const [pendingCount, setPendingCount] = useState(0);
   const [storeInfo, setStoreInfo] = useState({ name: "Carregando...", id: "" });
 
-  // Função unificada para buscar dados
   const fetchData = async () => {
+    // 1. Pega o usuário logado
     const { data: { user } } = await supabase.auth.getUser();
-    
     if (!user) return;
 
-    // 1. Busca Informações da Loja
+    // 2. Busca Informações da Loja filtrando pelo OWNER_ID (Dono)
+    // Usamos maybeSingle para evitar erros se a loja ainda estiver sendo criada
     const { data: store } = await supabase
         .from('stores')
         .select('name, id')
-        .eq('id', user.id)
-        .single();
+        .eq('owner_id', user.id) 
+        .maybeSingle();
     
     if (store) {
         setStoreInfo({ name: store.name, id: store.id });
+
+        // 3. Busca Contagem de Pedidos Pendentes usando o ID REAL da loja
+        const { count } = await supabase
+          .from('orders')
+          .select('*', { count: 'exact', head: true })
+          .eq('store_id', store.id) // Aqui usamos o ID da loja, não o do user
+          .eq('status', 'pending');
+
+        setPendingCount(count || 0);
     }
-
-    // 2. Busca Contagem de Pedidos Pendentes
-    const { count } = await supabase
-      .from('orders')
-      .select('*', { count: 'exact', head: true })
-      .eq('store_id', user.id)
-      .eq('status', 'pending');
-
-    setPendingCount(count || 0);
   };
 
   useEffect(() => {
-    // Busca inicial
     fetchData();
 
-    // Configura o Realtime para atualizar o contador de pedidos
+    // Realtime para pedidos
     const channel = supabase
       .channel('sidebar-realtime')
       .on(
         'postgres_changes',
         { event: '*', schema: 'public', table: 'orders' },
-        () => {
-            // Toda a vez que um pedido mudar, recarrega a contagem
-            fetchData();
-        }
+        () => fetchData()
       )
       .subscribe();
 
-    // Limpeza ao desmontar
     return () => {
       supabase.removeChannel(channel);
     };
@@ -139,37 +132,33 @@ export default function AdminSidebar() {
               
               <span>{item.name}</span>
 
-              {/* CONTADOR DE PEDIDOS (Badge Laranja) */}
               {isOrders && pendingCount > 0 && (
-                <div className="ml-auto flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-white text-[10px] font-bold shadow-[0_0_10px_rgba(249,115,22,0.6)] animate-pulse">
+                <div className="ml-auto flex items-center justify-center min-w-[20px] h-5 px-1.5 rounded-full bg-orange-500 text-white text-[10px] font-bold animate-pulse">
                     {pendingCount > 99 ? "+99" : pendingCount}
                 </div>
               )}
               
-              {/* Indicador de Ativo (Bolinha Laranja subtil) */}
               {isActive && (!isOrders || pendingCount === 0) && (
-                <div className="ml-auto w-1.5 h-1.5 rounded-full bg-orange-500 shadow-[0_0_8px_rgba(249,115,22,0.5)]" />
+                <div className="ml-auto w-1.5 h-1.5 rounded-full bg-orange-500" />
               )}
             </Link>
           );
         })}
       </nav>
 
-      {/* RODAPÉ (INFO DA LOJA + LOGOUT) */}
+      {/* RODAPÉ */}
       <div className="p-4 border-t border-zinc-800/50 space-y-3 bg-zinc-950">
-        
-        {/* Card da Loja Conectada */}
         <div className="bg-zinc-900/50 border border-zinc-800 p-3 rounded-xl flex items-center gap-3">
             <div className="h-8 w-8 rounded-lg bg-zinc-800 flex items-center justify-center text-zinc-400 shrink-0 border border-zinc-700">
                 <Building2 size={16} />
             </div>
             <div className="overflow-hidden min-w-0">
                 <p className="text-[10px] uppercase font-bold text-zinc-500 truncate">Loja Conectada</p>
-                <p className="text-sm font-bold text-white truncate leading-tight" title={storeInfo.name}>
+                <p className="text-sm font-bold text-white truncate leading-tight">
                     {storeInfo.name}
                 </p>
                 <p className="text-[10px] text-zinc-600 font-mono mt-0.5 truncate">
-                    ID: {storeInfo.id.slice(0, 8)}...
+                    ID: {storeInfo.id || "Buscando..."}
                 </p>
             </div>
         </div>

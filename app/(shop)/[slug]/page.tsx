@@ -1,68 +1,67 @@
-import { createClient } from "@/lib/supabase-server";
+import { createClient } from "@/lib/supabase-server"; 
 import { notFound } from "next/navigation";
-import StoreFront from "@/components/shop/StoreFront";
-import StoreLogin from "@/components/shop/StoreLogin";
 
-// Função auxiliar para calcular se está aberto
-function checkStoreOpen(opensAt: string | null, closesAt: string | null) {
-  if (!opensAt || !closesAt) return true; // Se não configurou, assume aberto
+// --- CORREÇÃO AQUI: Importando do SEU arquivo StoreFront.tsx ---
+import { StoreFront } from "@/components/shop/StoreFront"; 
 
-  const now = new Date();
-  const brTime = new Date(now.toLocaleString("en-US", { timeZone: "America/Sao_Paulo" }));
+// Função auxiliar de horário
+function checkStoreOpen(opensAt: string, closesAt: string, openDays: number[]) {
+  if (!opensAt || !closesAt) return false;
   
-  const currentMinutes = brTime.getHours() * 60 + brTime.getMinutes();
+  const now = new Date();
+  const utc = now.getTime() + (now.getTimezoneOffset() * 60000);
+  const brasiliaTime = new Date(utc - (3 * 3600000));
+  
+  const currentDay = brasiliaTime.getDay();
+  const currentTime = brasiliaTime.getHours() * 60 + brasiliaTime.getMinutes();
 
-  const [openHour, openMinute] = opensAt.split(':').map(Number);
-  const [closeHour, closeMinute] = closesAt.split(':').map(Number);
+  const [openH, openM] = opensAt.split(":").map(Number);
+  const [closeH, closeM] = closesAt.split(":").map(Number);
+  
+  const openTime = openH * 60 + openM;
+  const closeTime = closeH * 60 + closeM;
 
-  const startMinutes = openHour * 60 + openMinute;
-  const endMinutes = closeHour * 60 + closeMinute;
-
-  if (endMinutes < startMinutes) {
-    return currentMinutes >= startMinutes || currentMinutes <= endMinutes;
-  }
-
-  return currentMinutes >= startMinutes && currentMinutes <= endMinutes;
+  if (!openDays.includes(currentDay)) return false;
+  return currentTime >= openTime && currentTime < closeTime;
 }
 
-// CORREÇÃO AQUI: params agora é uma Promise
-export default async function StorePage({ params }: { params: Promise<{ slug: string }> }) {
-  
-  // 1. DESEMBRULHAR OS PARAMS (Obrigatório no Next.js 15)
+export default async function Page({
+  params,
+}: {
+  params: Promise<{ slug: string }>;
+}) {
   const { slug } = await params;
-
   const supabase = await createClient();
 
-  // 2. Busca a Loja (Usando a variável 'slug' que pegamos acima)
+  // 1. Busca Loja
   const { data: store } = await supabase
     .from("stores")
     .select("*")
-    .eq("slug", slug) 
-    .single();
+    .eq("slug", slug)
+    .maybeSingle();
 
   if (!store) return notFound();
 
-  // 3. Verifica Usuário
-  const { data: { session } } = await supabase.auth.getSession();
-
-  // --- MODO: LOGIN ---
-  if (!session) {
-    return <StoreLogin store={store as any} />;
-  }
-
-  // --- MODO: VITRINE ---
-  const isOpen = checkStoreOpen(store.opens_at, store.closes_at);
-
+  // 2. Busca Produtos
   const { data: products } = await supabase
     .from("products")
     .select("*")
     .eq("store_id", store.id)
-    .eq("active", true);
+    .eq("active", true)
+    .order("category", { ascending: true });
 
+  // 3. Verifica Status
+  const isOpen = checkStoreOpen(
+    store.opens_at || "08:00", 
+    store.closes_at || "22:00", 
+    store.open_days || [0,1,2,3,4,5,6]
+  );
+
+  // 4. Renderiza o SEU componente visual
   return (
     <StoreFront 
-      store={store as any} 
-      products={(products || []) as any} 
+      store={store} 
+      products={products || []} 
       isOpen={isOpen} 
     />
   );
